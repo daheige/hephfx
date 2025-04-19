@@ -4,18 +4,41 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
+	"github.com/daheige/hephfx/example/internal/interfaces/rpc/interceptor"
 	"github.com/daheige/hephfx/example/internal/pb"
+	"github.com/daheige/hephfx/logger"
 	"github.com/daheige/hephfx/micro"
+	"github.com/daheige/hephfx/monitor"
 )
 
 func main() {
+	// 初始化日志配置
+	logger.Default(
+		logger.WithStdout(true),
+		logger.WithJsonFormat(true),
+		logger.WriteToFile(false),
+	)
+
+	grpcPort := 50051
 	// 创建grpc微服务实例
 	s := micro.NewService(
-		fmt.Sprintf("0.0.0.0:%d", 50051),
+		fmt.Sprintf("0.0.0.0:%d", grpcPort),
 		micro.WithLogger(micro.LoggerFunc(log.Printf)),
-		micro.WithEnableRequestValidator(),
+		micro.WithShutdownTimeout(5*time.Second),
+		micro.WithEnablePrometheus(), // prometheus interceptor
+
+		// micro.WithEnableRequestValidator(), // request interceptor
+		// 使用自定义请求拦截器
+		micro.WithUnaryInterceptor(interceptor.AccessLog),
 	)
+
+	// 初始化prometheus和pprof，可以根据实际情况更改
+	// metrics访问地址：http://localhost:8090/metrics
+	// pprof访问地址：http://localhost:8090/debug/pprof
+	// 在metrics接口可以搜索grpc_开头的指标，表示当前微服务接口运行情况
+	monitor.InitMonitor(8090)
 
 	// 初始化greeter service
 	service := &GreeterServer{}
@@ -39,7 +62,7 @@ type GreeterServer struct {
 func (s *GreeterServer) SayHello(ctx context.Context, req *pb.HelloReq) (*pb.HelloReply, error) {
 	log.Println("request id:", req.Id)
 	reply := &pb.HelloReply{
-		Name:    "heph-fx",
+		Name:    fmt.Sprintf("heph-fx,id: %d", req.Id),
 		Message: "hello world",
 	}
 

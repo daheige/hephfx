@@ -7,10 +7,10 @@ import (
 	"google.golang.org/grpc"
 )
 
-// Option service option
+// Option for grpc service option
 type Option func(s *Service)
 
-// WithRecovery service recover func.
+// WithRecovery service recover func
 func WithRecovery(f func()) Option {
 	return func(s *Service) {
 		s.recovery = f
@@ -45,8 +45,8 @@ func WithShutdownTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithInterruptSignal returns an Option to append a interrupt signal
-func WithInterruptSignal(signal ...os.Signal) Option {
+// WithInterruptSignals returns an Option to append a interrupt signal
+func WithInterruptSignals(signal ...os.Signal) Option {
 	return func(s *Service) {
 		s.interruptSignals = append(s.interruptSignals, signal...)
 	}

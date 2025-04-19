@@ -82,7 +82,6 @@ func (s *Service) Run() error {
 	// intercept interrupt signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, s.interruptSignals...)
-
 	// channels to receive error
 	errChan := make(chan error, 1)
 
@@ -94,12 +93,11 @@ func (s *Service) Run() error {
 		errChan <- s.startGRPCServer()
 	}()
 
-	// wait for context cancellation or shutdown signal
 	select {
-	case err := <-errChan: // if gRPC server fail to start
+	case err := <-errChan:
 		return err
-	case sig := <-sigChan: // if we received an interrupt signal
-		s.logger.Printf("Interrupt signal received: %v\n", sig)
+	case sig := <-sigChan: // Block until we receive our signal.
+		s.logger.Printf("interrupt signal received: %v\n", sig)
 		s.stopServer()
 		return nil
 	}
@@ -159,11 +157,7 @@ func (s *Service) GetPid() int {
 // stopServer stop the gRPC server gracefully
 func (s *Service) stopServer() {
 	done := make(chan struct{}, 1)
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		s.shutdownTimeout,
-	)
-
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// gracefully stop gRPC server
@@ -174,14 +168,11 @@ func (s *Service) stopServer() {
 		s.GRPCServer.GracefulStop()
 	}()
 
-	select {
-	case <-ctx.Done():
-		s.logger.Printf("Grpc server shutdown ctx cancel error: %v", ctx.Err())
-	case <-done:
-		s.logger.Printf("Grpc server shutdown success")
-	}
-
+	<-done
+	<-ctx.Done()
 	s.shutdownFunc() // exec shutdown function
+
+	s.logger.Printf("grpc server shutdown success")
 }
 
 // startGRPCServer start grpc server.
@@ -210,18 +201,16 @@ func defaultService() *Service {
 		unaryInterceptors:  make([]grpc.UnaryServerInterceptor, 0, 20),
 		serverOptions:      make([]grpc.ServerOption, 0, 8),
 		logger:             dummyLogger,
-		enablePrometheus:   false,
 	}
 
-	s.shutdownFunc = func() {
-		s.logger.Printf("exec shutdown func\n")
-	}
+	// default shutdown function
+	s.shutdownFunc = func() {}
 
 	// goroutine recover catch stack
 	s.recovery = func() {
 		defer func() {
-			if e := recover(); e != nil {
-				s.logger.Printf("exec recover err: %v\n", e)
+			if r := recover(); r != nil {
+				s.logger.Printf("exec recover: %v\n", r)
 				s.logger.Printf("full stack: %s\n", string(debug.Stack()))
 			}
 		}()

@@ -17,7 +17,7 @@ func main() {
 	// Set up a connection to the server.
 	clientConn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("did not connect: %v", err)
+		log.Fatalf("failed to connect: %v", err)
 	}
 
 	defer clientConn.Close()

@@ -37,3 +37,21 @@ go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
 # Quick Start
 参考：[example](example)
+服务端运行效果如下：
+![example](grpc-server.png)
+
+metrics and pprof
+- metrics访问地址：http://localhost:8090/metrics
+- pprof访问地址：http://localhost:8090/debug/pprof
+
+# gRPC HTTP Proxy (gateway)
+参考:[example/cmd/gateway](example/cmd/gateway)
+运行效果如下：
+![grpc-http-proxy](grpc-http-proxy.png)
+
+metrics and pprof
+- metrics访问地址：http://localhost:9091/metrics
+- pprof访问地址：http://localhost:9091/debug/pprof
+
+# others
+后续将逐渐新增微服务配套的基础设施开源
