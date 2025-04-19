@@ -9,7 +9,7 @@ pb_dir=$root_dir/internal/pb
 
 if [ -z $protoc_inject ]; then
     echo 'Please install protoc-go-inject-tag'
-    echo "Please run go get -u github.com/favadi/protoc-go-inject-tag"
+    echo "Please run go install github.com/favadi/protoc-go-inject-tag@latest"
     exit 0
 fi
 

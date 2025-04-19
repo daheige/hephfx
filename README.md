@@ -26,7 +26,6 @@ protoc --version
 libprotoc 3.15.8
 ```
 4. 安装grpc相关的go工具链
-   参考链接： https://www.cloudwego.io/zh/docs/kitex/tutorials/code-gen/code_generation/
 ```shell
 # go gRPC tools
 go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@latest
