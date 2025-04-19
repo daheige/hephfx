@@ -11,6 +11,7 @@ require (
 	google.golang.org/genproto v0.0.0-20210513213006-bf773b8c8384
 	google.golang.org/grpc v1.71.0
 	google.golang.org/protobuf v1.36.5
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (
