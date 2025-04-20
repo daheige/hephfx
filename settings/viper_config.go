@@ -31,6 +31,24 @@ func New(opts ...Option) Config {
 	return c
 }
 
+// Load 加载配置文件内容，返回Config接口
+func Load(path string, opts ...Option) (Config, error) {
+	log.Println("config filename:", path, " dir:", filepath.Dir(path))
+	options := []Option{
+		WithConfigFile(path),
+	}
+	if len(opts) > 0 {
+		options = append(options, opts...)
+	}
+	c := New(options...)
+	err := c.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	return c, nil
+}
+
 type viperConfig struct {
 	vp         *viper.Viper
 	configFile string

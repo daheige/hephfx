@@ -13,10 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
 // Uuid 生成 version4 的uuid
 // 返回格式:eba1e8cd0460491049c644bdf3cf024d
 func Uuid() string {
@@ -54,7 +50,8 @@ func RandInt64(min, max int64) int64 {
 		return max
 	}
 
-	return rand.Int63n(max-min) + min
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	return r.Int63n(max-min) + min
 }
 
 // Md5 md5 func

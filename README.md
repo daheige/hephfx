@@ -4,6 +4,20 @@ A microservice framework for gRPC
 - 因此，采用这个名字的前面4个字母和fx组合后的名字`hephfx`代表特效`effects`或功能扩展`function extension`，表示工具的实用性与模块化能力‌。
 - 该框架旨在帮助开发人员快速学习和上手gRPC微服务，降低微服务接入和学习成本，让开发人员能够更好地聚焦业务逻辑开发而设计。
 
+目前框架现有的组件：
+```ini
+./
+├── LICENSE
+├── README.md
+├── example     # 实战demo
+├── go.mod
+├── go.sum
+├── logger      # 日志组件
+├── micro       # gRPC微服务封装
+├── monitor     # 服务监控metrics和Go pprof
+└── settings    # 配置文件读取
+```
+
 # Tool installation before development
 1. 进入 https://go.dev/dl/ 官方网站，根据系统安装不同的go版本，这里推荐在linux或mac系统上面安装go。
 2. 设置GOPROXY
