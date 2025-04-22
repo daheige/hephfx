@@ -15,6 +15,7 @@ A microservice framework for gRPC
 ├── logger      # 日志组件
 ├── micro       # gRPC微服务封装
 ├── monitor     # 服务监控metrics和Go pprof
+├── hestia      # 服务发现和注册，基于etcd实现
 └── settings    # 配置文件读取
 ```
 
