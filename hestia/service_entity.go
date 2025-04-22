@@ -20,6 +20,9 @@ type Service struct {
 	// 服务地址，一般来说由host:port组成
 	Address string `json:"address"`
 
+	// 命名服务的地址，例如：k8s的user.local.svc
+	NamedSvcAddress string `json:"named_svc_address"`
+
 	// 服务的唯一标识，例如uuid字符串
 	InstanceID string `json:"instance_id"`
 

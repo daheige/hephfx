@@ -1,6 +1,7 @@
 package etcd
 
 import (
+	"encoding/json"
 	"log"
 	"testing"
 	"time"
@@ -29,11 +30,28 @@ func TestRegistry(t *testing.T) {
 		log.Printf("failed to register service: %v", err)
 	}
 
-	time.Sleep(30 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	// mock service exit
 	err = r.Deregister(s)
 	if err != nil {
 		log.Printf("failed to register service: %v", err)
 	}
+}
+
+func TestDiscovery(t *testing.T) {
+	r, err := NewDiscovery([]string{
+		"http://127.0.0.1:12379",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	services, err := r.GetServices("my-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, _ := json.Marshal(services)
+	log.Printf("services: %v", string(b))
 }
