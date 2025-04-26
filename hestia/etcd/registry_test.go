@@ -17,12 +17,11 @@ func TestRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &hestia.Service{
-		Network:    "tcp",
-		Name:       "my-test",
-		Address:    "127.0.0.1:12379",
-		InstanceID: "1234",
-		Version:    "v1",
-		Created:    time.Now().Format("2006-01-02 15:04:05"),
+		Network: "tcp",
+		Name:    "my-test",
+		Address: "127.0.0.1:12379",
+		Version: "v1",
+		Created: time.Now().Format("2006-01-02 15:04:05"),
 	}
 
 	err = r.Register(s)
@@ -30,7 +29,7 @@ func TestRegistry(t *testing.T) {
 		log.Printf("failed to register service: %v", err)
 	}
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(100 * time.Second)
 
 	// mock service exit
 	err = r.Deregister(s)
@@ -47,6 +46,17 @@ func TestDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	for i := 0; i < 2; i++ { // mock obtaining the service list multiple times
+		services, err := r.GetServices("my-test")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		b, _ := json.Marshal(services)
+		log.Printf("services: %v", string(b))
+	}
+
+	time.Sleep(2 * time.Second)
 	services, err := r.GetServices("my-test")
 	if err != nil {
 		t.Fatal(err)
@@ -54,4 +64,6 @@ func TestDiscovery(t *testing.T) {
 
 	b, _ := json.Marshal(services)
 	log.Printf("services: %v", string(b))
+
+	time.Sleep(60 * time.Second)
 }

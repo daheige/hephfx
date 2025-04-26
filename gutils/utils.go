@@ -1,4 +1,4 @@
-package logger
+package gutils
 
 import (
 	"crypto/md5"

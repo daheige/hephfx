@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/daheige/hephfx/ctxkeys"
+	"github.com/daheige/hephfx/gutils"
 )
 
 // TestLogger test logger.
@@ -29,9 +32,9 @@ func TestLogger(t *testing.T) {
 	)
 
 	// reqId := RndUUID()
-	reqId := RndUUIDMd5()
+	reqId := gutils.RndUUIDMd5()
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, XRequestID, reqId)
+	ctx = context.WithValue(ctx, ctxkeys.XRequestID, reqId)
 	logger.Info(ctx, "hello", map[string]interface{}{
 		"a": 1,
 		"b": 12,
@@ -116,9 +119,9 @@ func BenchmarkNew(b *testing.B) {
 	)
 
 	// reqId := RndUUID()
-	reqId := RndUUIDMd5()
+	reqId := gutils.RndUUIDMd5()
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, XRequestID, reqId)
+	ctx = context.WithValue(ctx, ctxkeys.XRequestID, reqId)
 	logger.Info(ctx, "exec begin")
 	start := time.Now()
 	for i := 0; i < b.N; i++ {
@@ -144,7 +147,7 @@ func BenchmarkNew(b *testing.B) {
 // BenchmarkRandInt64-12    	  101911	     10942 ns/op
 func BenchmarkRandInt64(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		rnd := RandInt64(1, 10000)
+		rnd := gutils.RandInt64(1, 10000)
 		log.Println("rnd: ", rnd)
 	}
 }
@@ -155,7 +158,7 @@ func BenchmarkRandInt64(b *testing.B) {
 // BenchmarkRndUUIDMd5-12    	   92716	     11908 ns/op
 func BenchmarkRndUUIDMd5(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		s := RndUUIDMd5()
+		s := gutils.RndUUIDMd5()
 		log.Println("rnd uuid: ", s)
 	}
 }
@@ -166,7 +169,7 @@ func BenchmarkRndUUIDMd5(b *testing.B) {
 // BenchmarkRndUUID-12    	  101452	     11021 ns/op
 func BenchmarkRndUUID(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		s := RndUUID()
+		s := gutils.RndUUID()
 		log.Println("rnd uuid: ", s)
 	}
 }

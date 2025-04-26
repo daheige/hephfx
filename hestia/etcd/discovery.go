@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -13,8 +14,10 @@ import (
 )
 
 type etcdDiscovery struct {
-	client *clientv3.Client
-	prefix string
+	client      *clientv3.Client
+	prefix      string
+	serviceList map[string][]*hestia.Service
+	mu          sync.RWMutex
 }
 
 // NewDiscovery create a registry interface instance
@@ -35,8 +38,9 @@ func NewDiscovery(endpoints []string, opts ...Option) (hestia.Discovery, error) 
 	}
 
 	e := &etcdDiscovery{
-		client: client,
-		prefix: opt.prefix,
+		client:      client,
+		prefix:      opt.prefix,
+		serviceList: make(map[string][]*hestia.Service, 20),
 	}
 
 	return e, nil
@@ -46,29 +50,26 @@ func NewDiscovery(endpoints []string, opts ...Option) (hestia.Discovery, error) 
 // After we obtain the service instance, we can get the currently available service instance
 // from the service list according to different strategies.
 func (e *etcdDiscovery) GetServices(name string) ([]*hestia.Service, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-	defer cancel()
-	key := fmt.Sprintf("%s/%s", e.prefix, name)
-	// log.Println("key: ", key)
-	resp, err := e.client.Get(ctx, key, clientv3.WithPrefix())
-	if err != nil {
-		return nil, err
-	}
-	if len(resp.Kvs) == 0 {
-		return nil, hestia.ErrServicesNotFound
-	}
+	e.mu.RLock()
+	services, exist := e.serviceList[name]
+	e.mu.RUnlock()
 
-	// 获取所有的服务实例列表
-	services := make([]*hestia.Service, 0, len(resp.Kvs))
-	for _, kv := range resp.Kvs {
-		serviceEntry := &hestia.Service{}
-		err = json.Unmarshal(kv.Value, serviceEntry)
+	if !exist {
+		var err error
+		services, err = e.getServicesByName(name)
 		if err != nil {
-			log.Printf("unmarshal service failed,error:%v", err)
-			continue
+			return nil, err
+		}
+		if len(services) == 0 {
+			return nil, hestia.ErrServicesNotFound
 		}
 
-		services = append(services, serviceEntry)
+		e.mu.Lock()
+		e.serviceList[name] = services
+		e.mu.Unlock()
+		go func() {
+			e.watch(name)
+		}()
 	}
 
 	return services, nil
@@ -94,4 +95,70 @@ func (e *etcdDiscovery) Get(name string, strategyHandler ...hestia.StrategyHandl
 // String returns discovery name
 func (e *etcdDiscovery) String() string {
 	return "etcd"
+}
+
+// listen services change
+func (e *etcdDiscovery) watch(name string) {
+	key := fmt.Sprintf("%s/%s", e.prefix, name)
+	respChan := e.client.Watch(context.Background(), key, clientv3.WithPrefix())
+	log.Printf("watch etcd prefix:%v \n", key)
+	var changed bool
+	for resp := range respChan {
+		for _, event := range resp.Events {
+			switch event.Type {
+			case clientv3.EventTypePut, clientv3.EventTypeDelete: // 修改或新增
+				changed = true
+				break
+			}
+		}
+
+		if changed {
+			break
+		}
+	}
+
+	if !changed {
+		return
+	}
+
+	// 数据有变更，需要重新加载
+	log.Printf("reload etcd prefix:%s services", key)
+	services, err := e.getServicesByName(name)
+	if err != nil {
+		log.Printf("reload etcd prefix:%s services error:%v", key, err)
+		return
+	}
+
+	e.mu.Lock()
+	e.serviceList[name] = services
+	e.mu.Unlock()
+}
+
+func (e *etcdDiscovery) getServicesByName(name string) ([]*hestia.Service, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	key := fmt.Sprintf("%s/%s", e.prefix, name)
+	resp, err := e.client.Get(ctx, key, clientv3.WithPrefix())
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, nil
+	}
+
+	// 获取所有的服务实例列表
+	services := make([]*hestia.Service, 0, len(resp.Kvs))
+	for _, kv := range resp.Kvs {
+		serviceEntry := &hestia.Service{}
+		err = json.Unmarshal(kv.Value, serviceEntry)
+		if err != nil {
+			log.Printf("unmarshal service failed,error:%v", err)
+			continue
+		}
+
+		services = append(services, serviceEntry)
+	}
+
+	return services, nil
 }

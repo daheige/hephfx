@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc/codes"
 
+	"github.com/daheige/hephfx/ctxkeys"
+	"github.com/daheige/hephfx/gutils"
 	"github.com/daheige/hephfx/logger"
 )
 
@@ -31,16 +33,16 @@ func (ware *LogWare) Access() gin.HandlerFunc {
 		requestID := c.GetHeader("X-Request-Id")
 		if requestID == "" {
 			// logId = gutils.RndUuid() // 日志id
-			requestID = logger.Uuid()
+			requestID = gutils.Uuid()
 		}
 
 		// 设置跟请求相关的ctx信息
 		ctx := c.Request.Context()
-		ctx = context.WithValue(ctx, logger.XRequestID, requestID)
-		ctx = context.WithValue(ctx, logger.ReqClientIP, c.ClientIP())
-		ctx = context.WithValue(ctx, logger.RequestURI, c.Request.RequestURI)
-		ctx = context.WithValue(ctx, logger.UserAgent, c.GetHeader("User-Agent"))
-		ctx = context.WithValue(ctx, logger.RequestMethod, c.Request.Method)
+		ctx = context.WithValue(ctx, ctxkeys.XRequestID, requestID)
+		ctx = context.WithValue(ctx, ctxkeys.ClientIP, c.ClientIP())
+		ctx = context.WithValue(ctx, ctxkeys.RequestURI, c.Request.RequestURI)
+		ctx = context.WithValue(ctx, ctxkeys.UserAgent, c.GetHeader("User-Agent"))
+		ctx = context.WithValue(ctx, ctxkeys.RequestMethod, c.Request.Method)
 		c.Request = c.Request.WithContext(ctx)
 
 		// 记录请求日志
@@ -69,7 +71,7 @@ func (ware *LogWare) Recover() gin.HandlerFunc {
 				c := ctx.Request.Context()
 				logger.Warn(c, "exec panic", map[string]interface{}{
 					"trace_error": fmt.Sprintf("%v", err),
-					"full_stack":  string(logger.CatchStack()),
+					"full_stack":  string(gutils.CatchStack()),
 				})
 
 				// Check for a broken connection, as it is not really a

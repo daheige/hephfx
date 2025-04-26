@@ -10,6 +10,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/daheige/hephfx/ctxkeys"
+	"github.com/daheige/hephfx/gutils"
 	"github.com/daheige/hephfx/logger"
 	"github.com/daheige/hephfx/micro"
 )
@@ -37,17 +39,17 @@ func AccessLog(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo,
 
 	// x-request-id
 	var requestId string
-	if logID := ctx.Value(logger.XRequestID.String()); logID == nil {
-		requestId = logger.Uuid()
+	if logID := ctx.Value(ctxkeys.XRequestID.String()); logID == nil {
+		requestId = gutils.Uuid()
 	} else {
 		requestId, _ = logID.(string)
 	}
 
-	ctx = context.WithValue(ctx, logger.XRequestID, requestId)
-	ctx = context.WithValue(ctx, logger.ReqClientIP, clientIP)
-	ctx = context.WithValue(ctx, logger.RequestMethod, info.FullMethod)
+	ctx = context.WithValue(ctx, ctxkeys.XRequestID, requestId)
+	ctx = context.WithValue(ctx, ctxkeys.ClientIP, clientIP)
+	ctx = context.WithValue(ctx, ctxkeys.RequestMethod, info.FullMethod)
 	// ctx = context.WithValue(ctx, logger.RequestURI, info.FullMethod)
-	ctx = context.WithValue(ctx, logger.UserAgent, "grpc-client")
+	ctx = context.WithValue(ctx, ctxkeys.UserAgent, "grpc-client")
 	logger.Info(ctx, "exec begin", map[string]interface{}{
 		"client_ip": clientIP,
 	})

@@ -14,6 +14,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
+
+	"github.com/daheige/hephfx/ctxkeys"
+	"github.com/daheige/hephfx/gutils"
 )
 
 // defaultHostName default hostname.
@@ -144,7 +147,7 @@ func (z *zapLogWriter) Recover(ctx context.Context, msg string, fields ...interf
 			fields = make([]interface{}, 0, 2)
 		}
 
-		fields = append(fields, Fullstack.String(), string(debug.Stack()))
+		fields = append(fields, ctxkeys.Fullstack.String(), string(debug.Stack()))
 		z.DPanic(ctx, msg, fields...)
 	}
 }
@@ -200,35 +203,35 @@ func (z *zapLogWriter) parseFields(ctx context.Context, args []interface{}) []za
 		i += 2
 	}
 
-	if curTime := ctx.Value(LocalTime); curTime == nil {
+	if curTime := ctx.Value(ctxkeys.LocalTime); curTime == nil {
 		// add time_local 请求本地时间字段
-		fields = append(fields, zap.String(LocalTime.String(), time.Now().Format(tmFmtWithMS)))
+		fields = append(fields, zap.String(ctxkeys.LocalTime.String(), time.Now().Format(tmFmtWithMS)))
 	}
 
-	fields = append(fields, zap.String(CurHostname.String(), z.hostname))
+	fields = append(fields, zap.String(ctxkeys.CurHostname.String(), z.hostname))
 	// request_id 可能是一个数字，但建议请求id使用uuid字符串
-	if reqID := ctx.Value(XRequestID); reqID != nil {
-		fields = append(fields, zap.Any(XRequestID.String(), reqID))
+	if reqID := ctx.Value(ctxkeys.XRequestID); reqID != nil {
+		fields = append(fields, zap.Any(ctxkeys.XRequestID.String(), reqID))
 	} else {
-		fields = append(fields, zap.String(XRequestID.String(), Uuid()))
+		fields = append(fields, zap.String(ctxkeys.XRequestID.String(), gutils.Uuid()))
 	}
 
 	// request ip 地址存在就记录
-	if ip := ctx.Value(ReqClientIP); ip != nil {
+	if ip := ctx.Value(ctxkeys.ClientIP); ip != nil {
 		reqIP, _ := ip.(string)
-		fields = append(fields, zap.String(ReqClientIP.String(), reqIP))
+		fields = append(fields, zap.String(ctxkeys.ClientIP.String(), reqIP))
 	}
 
 	// request method 请求方法
-	if reqMethod := ctx.Value(RequestMethod); reqMethod != nil {
+	if reqMethod := ctx.Value(ctxkeys.RequestMethod); reqMethod != nil {
 		method, _ := reqMethod.(string)
-		fields = append(fields, zap.String(RequestMethod.String(), method))
+		fields = append(fields, zap.String(ctxkeys.RequestMethod.String(), method))
 	}
 
 	// request uri 请求资源地址
-	if reqURI := ctx.Value(RequestURI); reqURI != nil {
+	if reqURI := ctx.Value(ctxkeys.RequestURI); reqURI != nil {
 		uri, _ := reqURI.(string)
-		fields = append(fields, zap.String(RequestURI.String(), uri))
+		fields = append(fields, zap.String(ctxkeys.RequestURI.String(), uri))
 	}
 
 	return fields

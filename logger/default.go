@@ -5,6 +5,8 @@ import (
 	"runtime/debug"
 
 	"go.uber.org/zap"
+
+	"github.com/daheige/hephfx/ctxkeys"
 )
 
 var (
@@ -74,7 +76,7 @@ func Recover(ctx context.Context, msg string, fields ...interface{}) {
 			fields = make([]interface{}, 0, 2)
 		}
 
-		fields = append(fields, Fullstack.String(), string(debug.Stack()))
+		fields = append(fields, ctxkeys.Fullstack.String(), string(debug.Stack()))
 		logEntry.DPanic(ctx, msg, fields...)
 	}
 }

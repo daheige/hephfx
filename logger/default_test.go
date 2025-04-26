@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+
+	"github.com/daheige/hephfx/ctxkeys"
+	"github.com/daheige/hephfx/gutils"
 )
 
 // TestDefaultLogEntry test default log entry.
@@ -29,9 +32,9 @@ func TestDefaultLogEntry(t *testing.T) {
 	Default(opts...)
 
 	// 模拟请求id
-	reqId := RndUUIDMd5()
+	reqId := gutils.RndUUIDMd5()
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, XRequestID, reqId)
+	ctx = context.WithValue(ctx, ctxkeys.XRequestID, reqId)
 
 	Debug(ctx, "hello daheige", map[string]interface{}{
 		"a": 1,

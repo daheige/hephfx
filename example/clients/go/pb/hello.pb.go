@@ -230,7 +230,7 @@ var File_hello_proto protoreflect.FileDescriptor
 
 const file_hello_proto_rawDesc = "" +
 	"\n" +
-	"\vhello.proto\x12\x0eApp.Grpc.Hello\x1a\x1cgoogle/api/annotations.proto\"\x1a\n" +
+	"\vhello.proto\x12\x05Hello\x1a\x1cgoogle/api/annotations.proto\"\x1a\n" +
 	"\bHelloReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\":\n" +
 	"\n" +
@@ -241,10 +241,10 @@ const file_hello_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"?\n" +
 	"\tInfoReply\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xb6\x01\n" +
-	"\aGreeter\x12V\n" +
-	"\bSayHello\x12\x18.App.Grpc.Hello.HelloReq\x1a\x1a.App.Grpc.Hello.HelloReply\"\x14\x82\xd3\xe4\x93\x02\x0e\x12\f/v1/say/{id}\x12S\n" +
-	"\x04Info\x12\x17.App.Grpc.Hello.InfoReq\x1a\x19.App.Grpc.Hello.InfoReply\"\x17\x82\xd3\xe4\x93\x02\x11\x12\x0f/v1/info/{name}B\aZ\x05./;pbb\x06proto3"
+	"\amessage\x18\x02 \x01(\tR\amessage2\x92\x01\n" +
+	"\aGreeter\x12D\n" +
+	"\bSayHello\x12\x0f.Hello.HelloReq\x1a\x11.Hello.HelloReply\"\x14\x82\xd3\xe4\x93\x02\x0e\x12\f/v1/say/{id}\x12A\n" +
+	"\x04Info\x12\x0e.Hello.InfoReq\x1a\x10.Hello.InfoReply\"\x17\x82\xd3\xe4\x93\x02\x11\x12\x0f/v1/info/{name}B\aZ\x05./;pbb\x06proto3"
 
 var (
 	file_hello_proto_rawDescOnce sync.Once
@@ -260,16 +260,16 @@ func file_hello_proto_rawDescGZIP() []byte {
 
 var file_hello_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_hello_proto_goTypes = []any{
-	(*HelloReq)(nil),   // 0: App.Grpc.Hello.HelloReq
-	(*HelloReply)(nil), // 1: App.Grpc.Hello.HelloReply
-	(*InfoReq)(nil),    // 2: App.Grpc.Hello.InfoReq
-	(*InfoReply)(nil),  // 3: App.Grpc.Hello.InfoReply
+	(*HelloReq)(nil),   // 0: Hello.HelloReq
+	(*HelloReply)(nil), // 1: Hello.HelloReply
+	(*InfoReq)(nil),    // 2: Hello.InfoReq
+	(*InfoReply)(nil),  // 3: Hello.InfoReply
 }
 var file_hello_proto_depIdxs = []int32{
-	0, // 0: App.Grpc.Hello.Greeter.SayHello:input_type -> App.Grpc.Hello.HelloReq
-	2, // 1: App.Grpc.Hello.Greeter.Info:input_type -> App.Grpc.Hello.InfoReq
-	1, // 2: App.Grpc.Hello.Greeter.SayHello:output_type -> App.Grpc.Hello.HelloReply
-	3, // 3: App.Grpc.Hello.Greeter.Info:output_type -> App.Grpc.Hello.InfoReply
+	0, // 0: Hello.Greeter.SayHello:input_type -> Hello.HelloReq
+	2, // 1: Hello.Greeter.Info:input_type -> Hello.InfoReq
+	1, // 2: Hello.Greeter.SayHello:output_type -> Hello.HelloReply
+	3, // 3: Hello.Greeter.Info:output_type -> Hello.InfoReply
 	2, // [2:4] is the sub-list for method output_type
 	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name

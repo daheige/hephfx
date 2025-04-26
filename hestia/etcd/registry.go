@@ -9,6 +9,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
+	"github.com/daheige/hephfx/gutils"
 	"github.com/daheige/hephfx/hestia"
 )
 
@@ -54,6 +55,10 @@ func NewRegistry(endpoints []string, opts ...Option) (hestia.Registry, error) {
 
 // Register service instance register
 func (e *etcdRegistry) Register(s *hestia.Service) error {
+	if s.InstanceID == "" {
+		s.InstanceID = gutils.Uuid()
+	}
+
 	// validate address
 	address, err := hestia.Resolve(s.Address)
 	if err != nil {
@@ -91,8 +96,6 @@ func (e *etcdRegistry) register(s *hestia.Service, leaseID clientv3.LeaseID) err
 	}
 
 	key := fmt.Sprintf("%s/%s/%s", e.prefix, s.Name, s.InstanceID)
-	log.Println("key: ", key)
-
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
 	defer cancel()
 	_, err = e.client.Put(ctx, key, string(b), clientv3.WithLease(leaseID))
@@ -100,7 +103,7 @@ func (e *etcdRegistry) register(s *hestia.Service, leaseID clientv3.LeaseID) err
 		return err
 	}
 
-	log.Printf("register service:%v leaseID:%v success\n", s.Name, leaseID)
+	log.Printf("register service:%v instanceID:%v leaseID:%v success\n", s.Name, s.InstanceID, leaseID)
 	return nil
 }
 
@@ -119,21 +122,21 @@ func (e *etcdRegistry) String() string {
 }
 
 func (e *etcdRegistry) keepalive(meta *registerMeta) error {
-	keepAlive, err := e.client.KeepAlive(context.Background(), meta.leaseID)
+	keepAliveCh, err := e.client.KeepAlive(context.Background(), meta.leaseID)
 	if err != nil {
 		return err
 	}
 
 	go func() {
-		// eat keepAlive channel to keep related lease alive.
-		log.Printf("start keepalive lease %x for etcd registry", meta.leaseID)
-		for range keepAlive {
+		// eat keepAliveCh channel to keep related lease alive.
+		log.Printf("start keepalive leaseID:%v for etcd registry", meta.leaseID)
+		for range keepAliveCh {
 			select {
 			case <-e.stop:
-				log.Printf("stop keepalive lease %x for etcd registry", meta.leaseID)
+				log.Printf("stop keepalive leaseID:%v for etcd registry", meta.leaseID)
 				return
 			default:
-				// log.Printf("keepalive lease %x for etcd registry\n", meta.leaseID)
+				// log.Printf("keepalive leaseID:%v for etcd registry\n", meta.leaseID)
 			}
 		}
 	}()

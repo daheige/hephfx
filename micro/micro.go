@@ -16,6 +16,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
+
+	"github.com/daheige/hephfx/ctxkeys"
+	"github.com/daheige/hephfx/gutils"
 )
 
 // Service gRPC microservice struct
@@ -108,10 +111,10 @@ func (s *Service) requestInterceptor(ctx context.Context, req interface{}, info 
 	handler grpc.UnaryHandler) (reply interface{}, err error) {
 	t := time.Now()
 	md := IncomingMD(ctx) // get request metadata
-	requestID := GetStringFromMD(md, XRequestID)
+	requestID := GetStringFromMD(md, ctxkeys.XRequestID)
 	if requestID == "" {
-		requestID = Uuid()
-		md.Set(XRequestID.String(), requestID)
+		requestID = gutils.Uuid()
+		md.Set(ctxkeys.XRequestID.String(), requestID)
 	}
 
 	defer func() {
@@ -130,8 +133,8 @@ func (s *Service) requestInterceptor(ctx context.Context, req interface{}, info 
 	s.logger.Printf("exec begin,method:%s x-request-id:%s client-ip:%s\n", info.FullMethod, requestID, clientIP)
 
 	// set request ctx key
-	md.Set(ClientIP.String(), clientIP)
-	md.Set(RequestMethod.String(), info.FullMethod)
+	md.Set(ctxkeys.ClientIP.String(), clientIP)
+	md.Set(ctxkeys.RequestMethod.String(), info.FullMethod)
 
 	ctx = metadata.NewIncomingContext(ctx, md)
 

@@ -1,4 +1,4 @@
-package logger
+package ctxkeys
 
 // CtxKey ctx key struct.
 type CtxKey struct {
@@ -14,8 +14,8 @@ var (
 	// XRequestID request_id
 	XRequestID = CtxKey{"x-request-id"}
 
-	// ReqClientIP  client_ip
-	ReqClientIP = CtxKey{"client_ip"}
+	// ClientIP request client ip
+	ClientIP = CtxKey{"client_ip"}
 
 	// RequestMethod request method
 	RequestMethod = CtxKey{"request_method"}

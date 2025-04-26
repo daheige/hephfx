@@ -7,6 +7,8 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/daheige/hephfx/ctxkeys"
+	"github.com/daheige/hephfx/gutils"
 	"github.com/daheige/hephfx/logger"
 )
 
@@ -33,9 +35,9 @@ func main() {
 	)
 
 	// 模拟请求id
-	reqId := logger.RndUUIDMd5()
+	reqId := gutils.RndUUIDMd5()
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, logger.XRequestID, reqId)
+	ctx = context.WithValue(ctx, ctxkeys.XRequestID, reqId)
 	LogEntry.Info(ctx, "hello", map[string]interface{}{
 		"a": 1,
 		"b": 12,
