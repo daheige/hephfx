@@ -13,6 +13,8 @@ import (
 	"github.com/daheige/hephfx/hestia"
 )
 
+var _ hestia.Registry = (*etcdRegistry)(nil)
+
 type etcdRegistry struct {
 	client   *clientv3.Client
 	leaseTTL int64

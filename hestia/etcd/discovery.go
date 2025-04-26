@@ -13,6 +13,8 @@ import (
 	"github.com/daheige/hephfx/hestia"
 )
 
+var _ hestia.Discovery = (*etcdDiscovery)(nil)
+
 type etcdDiscovery struct {
 	client      *clientv3.Client
 	prefix      string
