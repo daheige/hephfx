@@ -16,18 +16,20 @@ import (
 var _ hestia.Discovery = (*etcdDiscovery)(nil)
 
 type etcdDiscovery struct {
-	client      *clientv3.Client
-	prefix      string
-	serviceList map[string][]*hestia.Service
-	mu          sync.RWMutex
+	client       *clientv3.Client
+	prefix       string
+	serviceList  map[string][]*hestia.Service
+	disableWatch bool // disable watch
+	mu           sync.RWMutex
 }
 
 // NewDiscovery create a registry interface instance
 func NewDiscovery(endpoints []string, opts ...Option) (hestia.Discovery, error) {
 	opt := &Options{
-		endpoints:   endpoints,
-		dialTimeout: 5 * time.Second,
-		prefix:      "hestia/registry-etcd",
+		endpoints:    endpoints,
+		dialTimeout:  5 * time.Second,
+		prefix:       "hestia/registry-etcd",
+		disableWatch: true, // disable watch
 	}
 
 	for _, o := range opts {
@@ -40,9 +42,10 @@ func NewDiscovery(endpoints []string, opts ...Option) (hestia.Discovery, error) 
 	}
 
 	e := &etcdDiscovery{
-		client:      client,
-		prefix:      opt.prefix,
-		serviceList: make(map[string][]*hestia.Service, 20),
+		client:       client,
+		prefix:       opt.prefix,
+		serviceList:  make(map[string][]*hestia.Service, 20),
+		disableWatch: opt.disableWatch,
 	}
 
 	return e, nil
@@ -52,9 +55,15 @@ func NewDiscovery(endpoints []string, opts ...Option) (hestia.Discovery, error) 
 // After we obtain the service instance, we can get the currently available service instance
 // from the service list according to different strategies.
 func (e *etcdDiscovery) GetServices(name string) ([]*hestia.Service, error) {
-	e.mu.RLock()
-	services, exist := e.serviceList[name]
-	e.mu.RUnlock()
+	var (
+		services []*hestia.Service
+		exist    bool
+	)
+	if !e.disableWatch {
+		e.mu.RLock()
+		services, exist = e.serviceList[name]
+		e.mu.RUnlock()
+	}
 
 	if !exist {
 		var err error
@@ -66,12 +75,16 @@ func (e *etcdDiscovery) GetServices(name string) ([]*hestia.Service, error) {
 			return nil, hestia.ErrServicesNotFound
 		}
 
-		e.mu.Lock()
-		e.serviceList[name] = services
-		e.mu.Unlock()
-		go func() {
-			e.watch(name)
-		}()
+		if !e.disableWatch {
+			e.mu.Lock()
+			e.serviceList[name] = services
+			e.mu.Unlock()
+			go func() {
+				e.watch(name)
+			}()
+		} else {
+			e.serviceList[name] = services
+		}
 	}
 
 	return services, nil
@@ -103,37 +116,32 @@ func (e *etcdDiscovery) String() string {
 func (e *etcdDiscovery) watch(name string) {
 	key := fmt.Sprintf("%s/%s", e.prefix, name)
 	respChan := e.client.Watch(context.Background(), key, clientv3.WithPrefix())
-	log.Printf("watch etcd prefix:%v \n", key)
-	var changed bool
+	log.Printf("watch etcd prefix:%v\n", key)
 	for resp := range respChan {
 		for _, event := range resp.Events {
 			switch event.Type {
 			case clientv3.EventTypePut, clientv3.EventTypeDelete: // 修改或新增
-				changed = true
-				break
+				// 数据有变更，需要重新加载
+				e.reload(key, name)
 			}
 		}
+	}
+}
 
-		if changed {
-			break
+func (e *etcdDiscovery) reload(key string, name string) {
+	go func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+
+		log.Printf("reload etcd prefix:%s services", key)
+		services, err := e.getServicesByName(name)
+		if err != nil {
+			log.Printf("reload etcd prefix:%s services error:%v", key, err)
+			return
 		}
-	}
 
-	if !changed {
-		return
-	}
-
-	// 数据有变更，需要重新加载
-	log.Printf("reload etcd prefix:%s services", key)
-	services, err := e.getServicesByName(name)
-	if err != nil {
-		log.Printf("reload etcd prefix:%s services error:%v", key, err)
-		return
-	}
-
-	e.mu.Lock()
-	e.serviceList[name] = services
-	e.mu.Unlock()
+		e.serviceList[name] = services
+	}()
 }
 
 func (e *etcdDiscovery) getServicesByName(name string) ([]*hestia.Service, error) {

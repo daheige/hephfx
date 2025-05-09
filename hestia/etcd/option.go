@@ -9,11 +9,11 @@ type Options struct {
 	endpoints   []string      // etcd节点列表
 	dialTimeout time.Duration // 默认5s
 	leaseTTL    int64         // etcd lease时间，单位s，默认60s
-	prefix      string        // 默认:hestia/registry-etcd
+	prefix      string        // default:hestia/registry-etcd
+	username    string
+	password    string
 
-	// etcd 用户名和密码可选
-	username string
-	password string
+	disableWatch bool // default:true disable etcd watch
 }
 
 // Option etcdImpl functional option
@@ -51,5 +51,12 @@ func WithPrefix(prefix string) Option {
 func WithLeaseTTL(ttl int64) Option {
 	return func(o *Options) {
 		o.leaseTTL = ttl
+	}
+}
+
+// WithEnableWatched set discover watch
+func WithEnableWatched() Option {
+	return func(o *Options) {
+		o.disableWatch = false
 	}
 }

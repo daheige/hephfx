@@ -42,6 +42,12 @@ func TestDiscovery(t *testing.T) {
 	r, err := NewDiscovery([]string{
 		"http://127.0.0.1:12379",
 	})
+
+	// 测试watch功能
+	// r, err := NewDiscovery([]string{
+	// 	"http://127.0.0.1:12379",
+	// }, WithDiscoveryWatched())
+
 	if err != nil {
 		t.Fatal(err)
 	}
