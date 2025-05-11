@@ -34,10 +34,15 @@ type Service struct {
 	unaryInterceptors  []grpc.UnaryServerInterceptor  // gRPC server interceptor
 	serverOptions      []grpc.ServerOption            // gRPC server options
 
-	enableRequestAccess    bool   // gRPC request log config
-	enableRequestValidator bool   // gRPC request validator
-	enablePrometheus       bool   // gRPC prometheus monitor
-	logger                 Logger // logger interface entry
+	enableRequestAccess bool // gRPC request log config
+
+	// gRPC request validator
+	// note: it needs to be used with the validator-gen plugin,
+	// for specific usage, refer to the example.
+	enableRequestValidator bool
+
+	enablePrometheus bool   // gRPC prometheus monitor
+	logger           Logger // logger interface entry
 }
 
 // NewService create a grpc service instance
@@ -163,17 +168,26 @@ func (s *Service) stopServer() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// gracefully stop gRPC server
+	// graceful exit current service
 	go func() {
-		defer s.recovery()
-		defer close(done)
+		defer func() {
+			s.recovery()
+			close(done)
+		}()
 
+		// stoop grpc server
 		s.GRPCServer.GracefulStop()
+
+		// exec shutdown function
+		s.shutdownFunc()
 	}()
 
-	<-done
-	<-ctx.Done()
-	s.shutdownFunc() // exec shutdown function
+	select {
+	case <-done:
+		s.logger.Printf("stop server done\n")
+	case <-ctx.Done():
+		s.logger.Printf("stop server context timeout\n")
+	}
 
 	s.logger.Printf("grpc server shutdown success")
 }

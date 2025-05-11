@@ -29,9 +29,13 @@ func main() {
 		micro.WithShutdownTimeout(5*time.Second),
 		micro.WithEnablePrometheus(), // prometheus interceptor
 
-		// micro.WithEnableRequestValidator(), // request interceptor
+		micro.WithEnableRequestValidator(), // request interceptor
 		// 使用自定义请求拦截器
 		micro.WithUnaryInterceptor(interceptor.AccessLog),
+		micro.WithShutdownFunc(func() {
+			time.Sleep(3 * time.Second) // mock long operations
+			log.Println("grpc server shutdown")
+		}),
 	)
 
 	// 初始化prometheus和pprof，可以根据实际情况更改
