@@ -1,6 +1,6 @@
 # example
     hephfx/micro实战
-# gen code
+# gen code for Go
 执行如下命令实现go代码生成
 ```shell
 sh bin/go-generate.sh
@@ -94,3 +94,35 @@ grpcurl -d '{"id":1}' -plaintext 127.0.0.1:50051 Hello.Greeter.SayHello
   "message": "hello world"
 }
 ```
+
+# gen and run nodejs code
+1. install grpc tools
+```shell
+sh bin/node-grpc-tools.sh
+```
+
+2. gen code
+```shell
+sh bin/nodejs-gen.sh
+```
+
+输出结果如下：
+```ini
+Generating codes...
+
+generating nodejs stubs...
+generating nodejs code success
+
+Generate codes successfully!
+```
+
+3. install nodejs package
+```shell
+cd clients/nodejs && npm install
+```
+
+4. run node client
+```shell
+node clients/nodejs/app.js
+```
+![node-client-run.png](node-client-run.png)

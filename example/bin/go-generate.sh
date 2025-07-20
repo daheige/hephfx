@@ -30,6 +30,7 @@ $protoExec -I $proto_dir \
     --go-grpc_out $pb_dir --go-grpc_opt paths=source_relative \
     $proto_dir/*.proto
 
+# 生成gateway代码
 $protoExec -I $proto_dir --grpc-gateway_out $pb_dir \
     --grpc-gateway_opt logtostderr=true \
     --grpc-gateway_opt paths=source_relative \
