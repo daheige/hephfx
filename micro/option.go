@@ -1,9 +1,11 @@
 package micro
 
 import (
+	"net/http"
 	"os"
 	"time"
 
+	gRuntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
 )
 
@@ -91,5 +93,75 @@ func WithEnableRequestValidator() Option {
 func WithGRPCNetwork(network string) Option {
 	return func(s *Service) {
 		s.gRPCNetwork = network
+	}
+}
+
+// WithHandlerFromEndpoints add HandlerFromEndpoint
+func WithHandlerFromEndpoints(h ...HandlerFromEndpoint) Option {
+	return func(s *Service) {
+		s.handlerFromEndpoints = append(s.handlerFromEndpoints, h...)
+	}
+}
+
+// WithEnableHTTPGateway enable http gateway
+func WithEnableHTTPGateway() Option {
+	return func(s *Service) {
+		s.enableHTTPGateway = true
+	}
+}
+
+// WithMuxOption returns an Option to append a mux option
+func WithMuxOption(muxOption ...gRuntime.ServeMuxOption) Option {
+	return func(s *Service) {
+		s.muxOptions = append(s.muxOptions, muxOption...)
+	}
+}
+
+// WithRoutes adds additional routes
+func WithRoutes(routes ...Route) Option {
+	return func(s *Service) {
+		s.routes = append(s.routes, routes...)
+	}
+}
+
+// WithGRPCEndpointDialOptions returns an Option to append a gRPC dial option
+func WithGRPCEndpointDialOptions(dialOption ...grpc.DialOption) Option {
+	return func(s *Service) {
+		s.gRPCEndpointDialOptions = append(s.gRPCEndpointDialOptions, dialOption...)
+	}
+}
+
+// WithGRPCHTTPServer returns an Option to set the http server
+func WithGRPCHTTPServer(server *http.Server) Option {
+	return func(s *Service) {
+		s.gRPCHTTPServer = server
+	}
+}
+
+// WithGRPCHTTPAddress set gRPC HTTP Address,eg: 0.0.0.0:8080
+func WithGRPCHTTPAddress(addr string) Option {
+	return func(s *Service) {
+		s.gRPCHTTPAddress = addr
+	}
+}
+
+// WithGRPCHTTPHandler returns an Option to set gRPC HTTP Server Handler
+func WithGRPCHTTPHandler(h HTTPHandlerFunc) Option {
+	return func(s *Service) {
+		s.gRPCHTTPHandler = h
+	}
+}
+
+// WithGRPCHTTPErrorHandler returns an Option to set the errorHandler
+func WithGRPCHTTPErrorHandler(errorHandler gRuntime.ErrorHandlerFunc) Option {
+	return func(s *Service) {
+		s.gRPCHTTPErrorHandler = errorHandler
+	}
+}
+
+// WithEnableGRPCShareAddress returns an Option to set the enableGRPCShareAddress
+func WithEnableGRPCShareAddress() Option {
+	return func(s *Service) {
+		s.enableGRPCShareAddress = true
 	}
 }

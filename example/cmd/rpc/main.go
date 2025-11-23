@@ -25,6 +25,7 @@ func main() {
 	// 创建grpc微服务实例
 	s := micro.NewService(
 		fmt.Sprintf("0.0.0.0:%d", grpcPort),
+		micro.WithEnableGRPCShareAddress(),
 		micro.WithLogger(micro.LoggerFunc(log.Printf)),
 		micro.WithShutdownTimeout(5*time.Second),
 		micro.WithEnablePrometheus(), // prometheus interceptor
