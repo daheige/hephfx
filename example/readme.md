@@ -120,22 +120,23 @@ node clients/nodejs/app.js
 
 # only start grpc server
 ```go
+grpcPort := 50051
 // 创建grpc微服务实例
-	s := micro.NewService(
-		fmt.Sprintf("0.0.0.0:%d", grpcPort),
-		
-		micro.WithLogger(micro.LoggerFunc(log.Printf)),
-		micro.WithShutdownTimeout(5*time.Second),
-		micro.WithEnablePrometheus(), // prometheus interceptor
+s := micro.NewService(
+    fmt.Sprintf("0.0.0.0:%d", grpcPort),
+    
+    micro.WithLogger(micro.LoggerFunc(log.Printf)),
+    micro.WithShutdownTimeout(5*time.Second),
+    micro.WithEnablePrometheus(), // prometheus interceptor
 
-		micro.WithEnableRequestValidator(), // request validator interceptor
-		// 使用自定义请求拦截器
-		micro.WithUnaryInterceptor(interceptor.AccessLog),
-		micro.WithShutdownFunc(func() {
-			time.Sleep(3 * time.Second) // mock long operations
-			log.Println("grpc server shutdown")
-		}),
-	)
+    micro.WithEnableRequestValidator(), // request validator interceptor
+    // 使用自定义请求拦截器
+    micro.WithUnaryInterceptor(interceptor.AccessLog),
+    micro.WithShutdownFunc(func() {
+        time.Sleep(3 * time.Second) // mock long operations
+        log.Println("grpc server shutdown")
+    }),
+)
 ```
 
 # start grpc and http gateway use one port
