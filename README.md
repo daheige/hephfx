@@ -9,11 +9,11 @@ A microservice framework for gRPC
 ./
 ├── LICENSE
 ├── README.md
-├── example     # 实战demo
+├── example     # gRPC实战demo
 ├── go.mod
 ├── go.sum
 ├── logger      # 日志组件
-├── micro       # gRPC微服务封装
+├── micro       # gRPC微服务封装，支持3种不同情况的gRPC 和 http gateway启动
 ├── monitor     # 服务监控metrics和Go pprof
 ├── hestia      # 服务发现和注册，基于etcd实现
 └── settings    # 配置文件读取
@@ -67,6 +67,3 @@ metrics and pprof
 metrics and pprof
 - metrics访问地址：http://localhost:9091/metrics
 - pprof访问地址：http://localhost:9091/debug/pprof
-
-# others
-后续将逐渐新增微服务配套的基础设施开源
