@@ -12,7 +12,7 @@ fi
 # proto文件目录
 proto_dir=$root_dir/protos
 # 生成的pb文件目录
-pb_dir=$root_dir/internal/pb
+pb_dir=$root_dir/pb
 
 mkdir -p $pb_dir
 

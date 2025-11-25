@@ -4,7 +4,7 @@ root_dir=$(cd "$(dirname "$0")"; cd ..; pwd)
 # grep all request validator
 sh $root_dir/bin/validator_grep.sh
 
-pb_dir=$root_dir/internal/pb
+pb_dir=$root_dir/pb
 
 validatorGenExec=$(which "validator_gen")
 if [ -z $validatorGenExec ]; then

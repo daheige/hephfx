@@ -5,7 +5,7 @@ root_dir=$(cd "$(dirname "$0")"; cd ..; pwd)
 protoc_inject=$(which "protoc-go-inject-tag")
 
 # 生成的pb文件目录
-pb_dir=$root_dir/internal/pb
+pb_dir=$root_dir/pb
 
 if [ -z $protoc_inject ]; then
     echo 'Please install protoc-go-inject-tag'

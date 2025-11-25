@@ -13,13 +13,7 @@ import "google/api/annotations.proto";
 service Greeter {
     rpc SayHello (HelloReq) returns (HelloReply){
         option (google.api.http) = {
-            get: "/v1/say/{id}"
-        };
-    };
-
-    rpc Info (InfoReq) returns (InfoReply){
-        option (google.api.http) = {
-            get: "/v1/info/{name}"
+            get: "/v1/say/{name}"
         };
     };
 }
@@ -29,28 +23,12 @@ service Greeter {
 // @validator=HelloReq
 message HelloReq {
     // [修饰符] 类型 字段名 = 标识符;
-    // @inject_tag: json:"id" validate:"required,min=1"
-    int64 id = 1;
-}
-
-// 定义服务端响应的数据格式
-message HelloReply {
-    // @inject_tag: json:"name"
-    string name = 1;
-
-    // @inject_tag: json:"message"
-    string message = 2;
-}
-
-// @validator=InfoReq
-message InfoReq {
-    // 主要用于grpc validator参数校验
     // @inject_tag: json:"name" validate:"required,min=1"
     string name = 1;
 }
 
-// InfoReply info reply
-message InfoReply {
-    string address = 1;
+// 定义服务端响应的数据格式
+message HelloReply {
+    // @inject_tag: json:"message"
     string message = 2;
 }

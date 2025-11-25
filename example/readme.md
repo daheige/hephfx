@@ -5,6 +5,7 @@
 ```shell
 sh bin/go-generate.sh
 ```
+一般来说，生成的pb代码，建议放在独立git仓库中，方便集中式管理和维护。
 
 # start running
 1. 先运行命令`go run cmd/rpc/main.go`启动服务端。
@@ -20,12 +21,6 @@ service Greeter {
     rpc SayHello (HelloReq) returns (HelloReply){
         option (google.api.http) = {
             get: "/v1/say/{id}"
-        };
-    };
-
-    rpc Info (InfoReq) returns (InfoReply){
-        option (google.api.http) = {
-            get: "/v1/info/{name}"
         };
     };
 }
@@ -44,9 +39,9 @@ brew install grpcurl
 ```shell
 go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
 ```
-2. 验证rs-rpc service启动的效果
+2. 验证grpc service启动的效果
 ```shell
-# 50051 是qa-svc grpc微服务的端口
+# 50051 是grpc微服务的端口
 grpcurl -plaintext 127.0.0.1:50051 list
 ```
 
@@ -64,11 +59,8 @@ grpcurl -plaintext 127.0.0.1:50051 describe Hello.Greeter
 ```ini
 Hello.Greeter is a service:
 service Greeter {
-  rpc Info ( .Hello.InfoReq ) returns ( .Hello.InfoReply ) {
-    option (.google.api.http) = { get: "/v1/info/{name}" };
-  }
   rpc SayHello ( .Hello.HelloReq ) returns ( .Hello.HelloReply ) {
-    option (.google.api.http) = { get: "/v1/say/{id}" };
+    option (.google.api.http) = { get: "/v1/say/{name}" };
   }
 }
 ```
@@ -80,18 +72,17 @@ grpcurl -plaintext 127.0.0.1:50051 describe Hello.HelloReq
 ```ini
 Hello.HelloReq is a message:
 message HelloReq {
-  int64 id = 1;
+  string name = 1;
 }
 ```
 5. 请求grpc方法
 ```shell
-grpcurl -d '{"id":1}' -plaintext 127.0.0.1:50051 Hello.Greeter.SayHello
+grpcurl -d '{"name":"daheige"}' -plaintext 127.0.0.1:50051 Hello.Greeter.SayHello
 ```
 返回结果如下：
 ```json
 {
-  "name": "heph-fx,id: 1",
-  "message": "hello world"
+  "message": "hello,daheige"
 }
 ```
 
@@ -101,7 +92,7 @@ grpcurl -d '{"id":1}' -plaintext 127.0.0.1:50051 Hello.Greeter.SayHello
 sh bin/node-grpc-tools.sh
 ```
 
-2. gen code
+2. gen nodejs code
 ```shell
 sh bin/nodejs-gen.sh
 ```
@@ -126,3 +117,86 @@ cd clients/nodejs && npm install
 node clients/nodejs/app.js
 ```
 ![node-client-run.png](node-client-run.png)
+
+# only start grpc server
+```go
+// 创建grpc微服务实例
+	s := micro.NewService(
+		fmt.Sprintf("0.0.0.0:%d", grpcPort),
+		
+		micro.WithLogger(micro.LoggerFunc(log.Printf)),
+		micro.WithShutdownTimeout(5*time.Second),
+		micro.WithEnablePrometheus(), // prometheus interceptor
+
+		micro.WithEnableRequestValidator(), // request validator interceptor
+		// 使用自定义请求拦截器
+		micro.WithUnaryInterceptor(interceptor.AccessLog),
+		micro.WithShutdownFunc(func() {
+			time.Sleep(3 * time.Second) // mock long operations
+			log.Println("grpc server shutdown")
+		}),
+	)
+```
+
+# start grpc and http gateway use one port
+```go
+// ...
+grpcPort := 50051
+// 创建grpc微服务实例
+s := micro.NewService(
+    fmt.Sprintf("0.0.0.0:%d", grpcPort),
+    
+    // start grpc and http gateway use one address
+    micro.WithEnableGRPCShareAddress(),
+    micro.WithHandlerFromEndpoints(pb.RegisterGreeterHandlerFromEndpoint), // register http endpoint
+    
+    micro.WithLogger(micro.LoggerFunc(log.Printf)),
+    micro.WithShutdownTimeout(5*time.Second),
+    micro.WithEnablePrometheus(), // prometheus interceptor
+    
+    micro.WithEnableRequestValidator(), // request validator interceptor
+	
+    // 使用自定义请求拦截器
+    micro.WithUnaryInterceptor(interceptor.AccessLog),
+    micro.WithShutdownFunc(func() {
+    time.Sleep(3 * time.Second) // mock long operations
+    log.Println("grpc server shutdown")
+    }),
+)
+// ...
+```
+请求接口如下：
+```shell
+curl 'http://localhost:50051/v1/say/daheige'
+```
+运行结果如下：
+```json
+{"message":"hello,daheige"}
+```
+
+# start grpc and http gateway use different address
+```go
+// ...
+grpcPort := 50051
+// 创建grpc微服务实例
+s := micro.NewService(
+    fmt.Sprintf("0.0.0.0:%d", grpcPort),
+
+    micro.WithGRPCHTTPAddress(fmt.Sprintf("0.0.0.0:%d", 8080)),
+    micro.WithHandlerFromEndpoints(pb.RegisterGreeterHandlerFromEndpoint), // register http endpoint
+    
+    micro.WithLogger(micro.LoggerFunc(log.Printf)),
+    micro.WithShutdownTimeout(5*time.Second),
+    micro.WithEnablePrometheus(), // prometheus interceptor
+    
+    micro.WithEnableRequestValidator(), // request validator interceptor
+	
+    // 使用自定义请求拦截器
+    micro.WithUnaryInterceptor(interceptor.AccessLog),
+    micro.WithShutdownFunc(func() {
+    time.Sleep(3 * time.Second) // mock long operations
+    log.Println("grpc server shutdown")
+    }),
+)
+// ...
+```

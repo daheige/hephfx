@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/daheige/hephfx/example/internal/interfaces/rpc/interceptor"
-	"github.com/daheige/hephfx/example/internal/pb"
+	"github.com/daheige/hephfx/example/pb"
 	"github.com/daheige/hephfx/logger"
 	"github.com/daheige/hephfx/micro"
 	"github.com/daheige/hephfx/monitor"
@@ -25,12 +25,18 @@ func main() {
 	// 创建grpc微服务实例
 	s := micro.NewService(
 		fmt.Sprintf("0.0.0.0:%d", grpcPort),
-		micro.WithEnableGRPCShareAddress(),
+
+		// start grpc and http gateway use one address
+		// micro.WithEnableGRPCShareAddress(),
+
+		// micro.WithGRPCHTTPAddress(fmt.Sprintf("0.0.0.0:%d", 8080)),
+		// micro.WithHandlerFromEndpoints(pb.RegisterGreeterHandlerFromEndpoint), // register http endpoint
+
 		micro.WithLogger(micro.LoggerFunc(log.Printf)),
 		micro.WithShutdownTimeout(5*time.Second),
 		micro.WithEnablePrometheus(), // prometheus interceptor
 
-		micro.WithEnableRequestValidator(), // request interceptor
+		micro.WithEnableRequestValidator(), // request validator interceptor
 		// 使用自定义请求拦截器
 		micro.WithUnaryInterceptor(interceptor.AccessLog),
 		micro.WithShutdownFunc(func() {
@@ -65,21 +71,8 @@ type GreeterServer struct {
 
 // SayHello 实现say hello方法
 func (s *GreeterServer) SayHello(ctx context.Context, req *pb.HelloReq) (*pb.HelloReply, error) {
-	log.Println("request id:", req.Id)
 	reply := &pb.HelloReply{
-		Name:    fmt.Sprintf("heph-fx,id: %d", req.Id),
-		Message: "hello world",
-	}
-
-	return reply, nil
-}
-
-// Info 实现info方法
-func (s *GreeterServer) Info(ctx context.Context, req *pb.InfoReq) (*pb.InfoReply, error) {
-	log.Println("request name:", req.Name)
-	reply := &pb.InfoReply{
-		Address: "sz",
-		Message: "hello",
+		Message: fmt.Sprintf("hello,%s", req.Name),
 	}
 
 	return reply, nil

@@ -20,6 +20,7 @@ import (
 	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
@@ -37,6 +38,9 @@ type HandlerFromEndpoint func(ctx context.Context, mux *gRuntime.ServeMux,
 
 // HTTPHandlerFunc is the http middleware handler function.
 type HTTPHandlerFunc func(*gRuntime.ServeMux) http.Handler
+
+// AnnotatorFunc is the annotator function is for injecting metadata from http request into gRPC context
+type AnnotatorFunc func(context.Context, *http.Request) metadata.MD
 
 // Service gRPC microservice struct
 type Service struct {
@@ -62,8 +66,10 @@ type Service struct {
 	logger           Logger // logger interface entry
 
 	// gRPC HTTP gateway settings
-	handlerFromEndpoints    []HandlerFromEndpoint     // http gw endpoint
-	enableHTTPGateway       bool                      // enable http gateway,default:false
+	enableHTTPGateway bool // enable http gateway,default:false
+	// note:If you need to start the HTTP gateway service, you must set this parameter
+	handlerFromEndpoints []HandlerFromEndpoint // http gw endpoint
+
 	mux                     *gRuntime.ServeMux        // gRPC http gateway runtime serverMux
 	muxOptions              []gRuntime.ServeMuxOption // gRPC HTTP server mux options
 	gRPCEndpointDialOptions []grpc.DialOption         // gRPC http gateway dail options
@@ -73,6 +79,7 @@ type Service struct {
 	gRPCHTTPHandler         func(*gRuntime.ServeMux) http.Handler
 	gRPCHTTPErrorHandler    gRuntime.ErrorHandlerFunc // gRPC http gateway error handler
 	enableGRPCShareAddress  bool                      // gRPC server and gRPC http gateway start on one port
+	annotators              []AnnotatorFunc           // for injecting metadata from http request into gRPC context
 }
 
 // NewService create a grpc service instance
@@ -112,8 +119,22 @@ func NewService(address string, opts ...Option) *Service {
 		s.serverOptions...,
 	)
 
+	// register reflection service on gRPC server.
+	reflection.Register(s.GRPCServer)
+
+	// check if the service is started at the same address
+	if s.gRPCHTTPAddress != "" {
+		if s.gRPCAddress == s.gRPCHTTPAddress {
+			s.enableGRPCShareAddress = true
+		}
+
+		// the starting address is different
+		s.enableGRPCShareAddress = false
+		s.enableHTTPGateway = true
+	}
+
+	// log.Println("grpc address", s.gRPCAddress, "http gateway address", s.gRPCHTTPAddress)
 	if s.enableGRPCShareAddress {
-		// log.Println("grpc address", s.gRPCAddress, "http gateway address", s.gRPCHTTPAddress)
 		s.gRPCHTTPAddress = s.gRPCAddress
 		s.enableHTTPGateway = true
 		// default http server config
@@ -129,6 +150,18 @@ func NewService(address string, opts ...Option) *Service {
 
 	// grpc http gateway default config
 	if s.enableHTTPGateway {
+		// default dial option is using insecure connection
+		if len(s.gRPCEndpointDialOptions) == 0 {
+			// Deprecated: use WithTransportCredentials and insecure.NewCredentials()
+			// instead. Will be supported throughout 1.x.
+			// s.gRPCEndpointDialOptions = append(s.gRPCEndpointDialOptions, grpc.WithInsecure())
+			// so use grpc.WithTransportCredentials(insecure.NewCredentials()) as default grpc.DialOption
+			s.gRPCEndpointDialOptions = append(
+				s.gRPCEndpointDialOptions,
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+			)
+		}
+
 		// default grpc http gateway handler error
 		if s.gRPCHTTPErrorHandler == nil {
 			s.gRPCHTTPErrorHandler = gRuntime.DefaultHTTPErrorHandler
@@ -137,6 +170,13 @@ func NewService(address string, opts ...Option) *Service {
 		// init gateway mux
 		// apply default marshal option and error handler for mux options
 		s.muxOptions = append(s.muxOptions, defaultMuxOption, gRuntime.WithErrorHandler(s.gRPCHTTPErrorHandler))
+
+		// init annotators
+		for _, annotator := range s.annotators {
+			s.muxOptions = append(s.muxOptions, gRuntime.WithMetadata(annotator))
+		}
+
+		// create http gateway server mux
 		s.mux = gRuntime.NewServeMux(s.muxOptions...)
 
 		if s.gRPCHTTPHandler == nil {
@@ -150,10 +190,6 @@ func NewService(address string, opts ...Option) *Service {
 
 // Run start service
 func (s *Service) Run() error {
-	if s.gRPCHTTPAddress != "" && s.gRPCAddress == s.gRPCHTTPAddress {
-		s.enableGRPCShareAddress = true
-	}
-
 	// start gRPC server and gRPC http gateway server on one port
 	if s.enableGRPCShareAddress {
 		return s.startUseOneAddress()
@@ -164,7 +200,7 @@ func (s *Service) Run() error {
 		return s.startGRPCService()
 	}
 
-	// start grpc gateway and http server on different port
+	// start grpc and http gateway server on different port
 	return s.startTwoServices()
 }
 
@@ -198,7 +234,7 @@ func (s *Service) startGRPCService() error {
 // start grpc gateway and http server on different port
 func (s *Service) startTwoServices() error {
 	if s.gRPCHTTPAddress == s.gRPCAddress {
-		return errors.New("gRPC server and gRPC http server address are the same")
+		return errors.New("gRPC server and gRPC http gateway address are the same")
 	}
 
 	// default http server config
@@ -223,15 +259,15 @@ func (s *Service) startTwoServices() error {
 	go func() {
 		defer s.recovery()
 
-		s.logger.Printf("Starting gPRC server listening on %d\n", s.gRPCAddress)
+		s.logger.Printf("Starting gPRC server listening on %s\n", s.gRPCAddress)
 		errChan1 <- s.startGRPCServer()
 	}()
 
-	// start HTTP/1.0 gateway server
+	// start gRPC HTTP gateway server
 	go func() {
 		defer s.recovery()
 
-		s.logger.Printf("Starting grpc http gateway server listening on %d\n", s.gRPCHTTPAddress)
+		s.logger.Printf("Starting gRPC http gateway server listening on %s\n", s.gRPCHTTPAddress)
 		errChan2 <- s.startGRPCGateway()
 	}()
 
@@ -240,11 +276,9 @@ func (s *Service) startTwoServices() error {
 	// if gRPC server fail to start
 	case err := <-errChan1:
 		return err
-
 	// if http server fail to start
 	case err := <-errChan2:
 		return err
-
 	// if we received an interrupt signal
 	case sig := <-sigChan:
 		s.logger.Printf("Interrupt signal received: %v\n", sig)
@@ -278,7 +312,7 @@ func (s *Service) startUseOneAddress() error {
 	go func() {
 		defer s.recovery()
 
-		s.logger.Printf("Starting http server and grpc server listening on %s\n", s.gRPCHTTPAddress)
+		s.logger.Printf("Starting gRPC http gateway and gRPC server listening on %s\n", s.gRPCHTTPAddress)
 		errChan <- s.startGRPCAndHTTPServer()
 	}()
 
@@ -319,9 +353,10 @@ func (s *Service) startGRPCAndHTTPServer() error {
 	httpMux := http.NewServeMux()
 	httpMux.Handle("/", s.mux)
 
+	// gRPC HTTP server address
 	s.gRPCHTTPServer.Addr = s.gRPCHTTPAddress
 
-	// gRPC server handler convert to http handler
+	// convert HTTP requests to http2
 	s.gRPCHTTPServer.Handler = GRPCHandlerFunc(s.GRPCServer, httpMux)
 	return s.gRPCHTTPServer.ListenAndServe()
 }
@@ -449,14 +484,11 @@ func (s *Service) stopGRPCServer() {
 		s.logger.Printf("stop server context timeout\n")
 	}
 
-	s.logger.Printf("grpc server shutdown success")
+	s.logger.Printf("gRPC server shutdown success")
 }
 
 // startGRPCServer start grpc server.
 func (s *Service) startGRPCServer() error {
-	// register reflection service on gRPC server.
-	reflection.Register(s.GRPCServer)
-
 	if s.gRPCNetwork == "" {
 		s.gRPCNetwork = "tcp"
 	}
@@ -563,7 +595,9 @@ func defaultGRPCHTTPHandler(mux *gRuntime.ServeMux) http.Handler {
 // so we can use the standard library to provide both HTTP/1.1 and HTTP/2 functions on the same port
 // The h2c.NewHandler method has been specially processed, and h2c.NewHandler will return an http.handler
 // The main internal logic is to intercept all h2c traffic, then hijack and redirect it
-// to the corresponding handler according to different request traffic types to process
+// to the corresponding handler according to different request traffic types to process.
+// If a request is a h2c connection, it's hijacked and redirected to
+// s.ServeConn. Otherwise the returned Handler just forwards requests to http.
 func GRPCHandlerFunc(grpcServer *grpc.Server, otherHandler http.Handler) http.Handler {
 	return h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ProtoMajor >= 2 && strings.Contains(r.Header.Get("Content-Type"), "application/grpc") {

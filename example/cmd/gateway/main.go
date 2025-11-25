@@ -19,7 +19,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/daheige/hephfx/example/internal/interfaces/gateway/middleware"
-	"github.com/daheige/hephfx/example/internal/pb"
+	"github.com/daheige/hephfx/example/pb"
 	"github.com/daheige/hephfx/logger"
 	"github.com/daheige/hephfx/monitor"
 )

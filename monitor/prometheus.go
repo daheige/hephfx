@@ -1,6 +1,8 @@
 package monitor
 
 import (
+	"log"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -25,6 +27,7 @@ func InitMonitor(port uint16, isWeb ...bool) {
 	httpMux := gpprof.New()
 
 	// 添加prometheus metrics处理器
+	log.Printf("Starting monitor metrics http server on:%d request path is /metrics", port)
 	httpMux.Handle("/metrics", promhttp.Handler())
 	gpprof.Run(httpMux, port)
 }

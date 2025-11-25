@@ -26,16 +26,10 @@ func main() {
 
 	// Contact the server and print out its response.
 	res, err := client.SayHello(context.Background(), &pb.HelloReq{
-		Id: 1,
+		Name: "daheige",
 	})
 	if err != nil {
 		log.Fatalf("could not greet: %v", err)
 	}
-	log.Printf("name:%s,message:%s", res.Name, res.Message)
-
-	res2, err := client.Info(context.Background(), &pb.InfoReq{
-		Name: "daheige",
-	})
-
-	log.Println(res2, err)
+	log.Printf("res message:%s", res.Message)
 }

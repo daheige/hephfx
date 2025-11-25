@@ -36,7 +36,7 @@ func Run(httpMux *http.ServeMux, port uint16) {
 		}()
 
 		address := fmt.Sprintf("0.0.0.0:%d", port)
-		log.Println("go PProf run on:", address)
+		log.Printf("Starting go PProf run on::%d request path is /debug/pprof\n", port)
 		if err := http.ListenAndServe(address, httpMux); err != nil {
 			log.Println("PProf listen error:", err)
 		}

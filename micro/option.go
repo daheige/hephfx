@@ -82,7 +82,7 @@ func WithEnablePrometheus() Option {
 	}
 }
 
-// WithEnableRequestValidator set request validator
+// WithEnableRequestValidator set request validator interceptor
 func WithEnableRequestValidator() Option {
 	return func(s *Service) {
 		s.enableRequestValidator = true

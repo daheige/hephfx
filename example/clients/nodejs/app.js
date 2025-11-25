@@ -4,7 +4,7 @@ let grpc = require('@grpc/grpc-js');
 
 // 创建请求对象
 let request = new messages.HelloReq();
-request.setId(1);
+request.setName("daheige");
 
 // 创建grpc client
 let client = new services.GreeterClient(
@@ -20,6 +20,5 @@ client.sayHello(request, function(err, data) {
     }
 
     console.log("response data:",data);
-    console.log("name: ",data.getName());
     console.log("message: ",data.getMessage());
 });
