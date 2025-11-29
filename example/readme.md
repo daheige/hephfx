@@ -201,3 +201,120 @@ s := micro.NewService(
 )
 // ...
 ```
+
+# service discovery and register
+- 在 Kubernetes 中让 gRPC 客户端连接集群内服务，关键在于选择合适的服务发现机制。gRPC 的长连接特性使得直接使用 K8s Service 无法实现真正的负载均衡。
+- ‌核心解决方案：使用 Headless Service + DNS 解析‌。也就是说，通过创建 `Headless Service（clusterIP: None）`，gRPC 客户端能够直接获取所有 Pod IP 地址，从而实现基于连接的负载均衡。
+- 客户端连接地址格式：dns:///<service-name>.<namespace>.svc.cluster.local:50051
+
+示例代码如下：
+```go
+package main
+
+import (
+	"context"
+	"log"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/daheige/hephfx/example/clients/go/pb"
+)
+
+func main() {
+	// address := "localhost:50051" 
+	// 或者使用k8s命名服务地址: hello.svc.local:50051
+	// 使用k8s命名服务+dns解析方式连接，格式:dns:///your-service.namespace.svc.cluster.local:50051
+	address := "dns:///hello.test.svc.cluster.local:50051"
+	log.Println("address: ", address)
+	
+	// Set up a connection to the server.
+	clientConn, err := grpc.NewClient(
+		address,
+		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig": [{"round_robin":{}}]}`),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Fatalf("failed to connect: %v", err)
+	}
+
+	defer clientConn.Close()
+
+	client := pb.NewGreeterClient(clientConn)
+
+	// Contact the server and print out its response.
+	res, err := client.SayHello(context.Background(), &pb.HelloReq{
+		Name: "daheige",
+	})
+	if err != nil {
+		log.Fatalf("could not greet: %v", err)
+	}
+	log.Printf("res message:%s", res.Message)
+}
+```
+以下是k8s headless deployment配置：
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpc-server
+  labels:
+    app: grpc-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: grpc-server
+  template:
+    metadata:
+      labels:
+        app: grpc-server
+    spec:
+      containers:
+        - name: grpc-server
+          image: your-grpc-server:latest
+          ports:
+            - containerPort: 50051
+              name: grpc
+          env:
+            - name: PORT
+              value: "50051"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+```
+对应的headless service 配置如下：
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: grpc-headless-service # 服务名
+  labels:
+    app: grpc-server
+spec:
+  clusterIP: None  # 关键配置：定义为Headless Service
+  selector:
+    app: grpc-server  # 匹配Deployment中的Pod标签
+  ports:
+  - name: grpc
+    protocol: TCP
+    port: 50051      # Service端口
+    targetPort: 50051 # Pod端口
+  publishNotReadyAddresses: true  # 发布未就绪的Pod地址
+```
+对应的configmap如下：
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grpc-client-config
+data:
+  grpc-endpoint: "dns:///grpc-headless-service.default.svc.cluster.local:50051"
+  # 客户端连接地址格式：dns:///<service-name>.<namespace>.svc.cluster.local:50051
+```
+
+以上配置，请根据实际情况进行调整即可，或者说使用其他的服务发现和注册平台也可以，例如：etcd服务发现和注册，封装见`hestia`包。
