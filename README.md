@@ -51,7 +51,7 @@ go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 ```
 
 # Quick Start
-参考：[example](example)
+参考：[example](example) 或者 https://github.com/daheige/hephfx-micro-svc
 服务端运行效果如下：
 ![example](grpc-server.png)
 
