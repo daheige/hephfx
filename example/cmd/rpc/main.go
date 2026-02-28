@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/daheige/hephfx/example/internal/interfaces/rpc/interceptor"
@@ -22,15 +24,33 @@ func main() {
 	)
 
 	grpcPort := 50051
+
+	// 健康检查路由地址，可以根据实际情况添加
+	routerOpts := micro.WithRoutes(micro.Route{
+		Method: "GET",
+		Path:   "/healthz",
+		Handler: func(w http.ResponseWriter, r *http.Request) {
+			fmt.Println("request path:", r.URL.Path)
+			b, _ := json.Marshal(map[string]interface{}{
+				"code":    0,
+				"message": "Ok",
+				"active":  true,
+				"time":    time.Now().Format("2006-01-02 15:04:05"),
+			})
+
+			w.Write(b)
+		},
+	})
+
 	// 创建grpc微服务实例
 	s := micro.NewService(
 		fmt.Sprintf("0.0.0.0:%d", grpcPort),
 
 		// start grpc and http gateway use one address
-		// micro.WithEnableGRPCShareAddress(),
+		micro.WithEnableGRPCShareAddress(),
 
 		// micro.WithGRPCHTTPAddress(fmt.Sprintf("0.0.0.0:%d", 8080)),
-		// micro.WithHandlerFromEndpoints(pb.RegisterGreeterHandlerFromEndpoint), // register http endpoint
+		micro.WithHandlerFromEndpoints(pb.RegisterGreeterHandlerFromEndpoint), // register http endpoint
 
 		micro.WithLogger(micro.LoggerFunc(log.Printf)),
 		micro.WithShutdownTimeout(5*time.Second),
@@ -43,6 +63,7 @@ func main() {
 			time.Sleep(3 * time.Second) // mock long operations
 			log.Println("grpc server shutdown")
 		}),
+		routerOpts,
 	)
 
 	// 初始化prometheus和pprof，可以根据实际情况更改

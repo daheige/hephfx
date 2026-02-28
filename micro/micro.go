@@ -12,10 +12,11 @@ import (
 	"strings"
 	"time"
 
-	gRecovery "github.com/grpc-ecosystem/go-grpc-middleware/recovery"
-	gValidator "github.com/grpc-ecosystem/go-grpc-middleware/validator"
-	gPrometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	gPrometheus "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
+	gRecovery "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
+	gValidator "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/validator"
 	gRuntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
@@ -62,8 +63,10 @@ type Service struct {
 	// for specific usage, refer to the example.
 	enableRequestValidator bool
 
-	enablePrometheus bool   // gRPC prometheus monitor
-	logger           Logger // logger interface entry
+	enablePrometheus     bool // gRPC prometheus monitor
+	serverMetricsOptions []gPrometheus.ServerMetricsOption
+
+	logger Logger // logger interface entry
 
 	// gRPC HTTP gateway settings
 	enableHTTPGateway bool // enable http gateway,default:false
@@ -105,8 +108,14 @@ func NewService(address string, opts ...Option) *Service {
 
 	// install prometheus interceptor
 	if s.enablePrometheus {
-		s.streamInterceptors = append(s.streamInterceptors, gPrometheus.StreamServerInterceptor)
-		s.unaryInterceptors = append(s.unaryInterceptors, gPrometheus.UnaryServerInterceptor)
+		// NewServerMetrics returns a new ServerMetrics object that has server interceptor methods.
+		// NOTE: Remember to register ServerMetrics object by using prometheus registry
+		// e.g. prometheus.MustRegister(myServerMetrics).
+		serverMetrics := gPrometheus.NewServerMetrics(s.serverMetricsOptions...)
+		prometheus.MustRegister(serverMetrics)
+
+		s.streamInterceptors = append(s.streamInterceptors, serverMetrics.StreamServerInterceptor())
+		s.unaryInterceptors = append(s.unaryInterceptors, serverMetrics.UnaryServerInterceptor())
 	}
 
 	// gRPC server options

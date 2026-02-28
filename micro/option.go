@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	gPrometheus "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
 	gRuntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
 )
@@ -79,6 +80,13 @@ func WithEnableRequestAccess() Option {
 func WithEnablePrometheus() Option {
 	return func(s *Service) {
 		s.enablePrometheus = true
+	}
+}
+
+// WithServerMetricsOptions set prometheus server metrics options
+func WithServerMetricsOptions(opts ...gPrometheus.ServerMetricsOption) Option {
+	return func(s *Service) {
+		s.serverMetricsOptions = append(s.serverMetricsOptions, opts...)
 	}
 }
 
