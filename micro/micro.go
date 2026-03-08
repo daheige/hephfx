@@ -135,10 +135,11 @@ func NewService(address string, opts ...Option) *Service {
 	if s.gRPCHTTPAddress != "" {
 		if s.gRPCAddress == s.gRPCHTTPAddress {
 			s.enableGRPCShareAddress = true
+		} else {
+			// the starting address is different
+			s.enableGRPCShareAddress = false
 		}
 
-		// the starting address is different
-		s.enableGRPCShareAddress = false
 		s.enableHTTPGateway = true
 	}
 
