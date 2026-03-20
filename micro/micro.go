@@ -79,7 +79,7 @@ type Service struct {
 	routes                  []Route                   // gRPC http custom router rules
 	gRPCHTTPServer          *http.Server              // gRPC http server
 	gRPCHTTPAddress         string                    // gRPC http gateway address,eg:0.0.0.0:8080
-	gRPCHTTPHandler         func(*gRuntime.ServeMux) http.Handler
+	gRPCHTTPHandler         HTTPHandlerFunc
 	gRPCHTTPErrorHandler    gRuntime.ErrorHandlerFunc // gRPC http gateway error handler
 	enableGRPCShareAddress  bool                      // gRPC server and gRPC http gateway start on one port
 	annotators              []AnnotatorFunc           // for injecting metadata from http request into gRPC context
@@ -214,7 +214,7 @@ func (s *Service) Run() error {
 	return s.startTwoServices()
 }
 
-// Run start gRPC service
+// startGRPCService start gRPC service
 func (s *Service) startGRPCService() error {
 	// intercept interrupt signals
 	sigChan := make(chan os.Signal, 1)
@@ -226,7 +226,7 @@ func (s *Service) startGRPCService() error {
 	go func() {
 		defer s.recovery()
 
-		s.logger.Printf("start gPRC server listening on %s\n", s.gRPCAddress)
+		s.logger.Printf("start gRPC server listening on %s\n", s.gRPCAddress)
 		errChan <- s.startGRPCServer()
 	}()
 
@@ -269,7 +269,7 @@ func (s *Service) startTwoServices() error {
 	go func() {
 		defer s.recovery()
 
-		s.logger.Printf("Starting gPRC server listening on %s\n", s.gRPCAddress)
+		s.logger.Printf("Starting gRPC server listening on %s\n", s.gRPCAddress)
 		errChan1 <- s.startGRPCServer()
 	}()
 
@@ -302,11 +302,12 @@ func (s *Service) stopTwoServices() {
 	// disable keep-alive on existing connections
 	s.gRPCHTTPServer.SetKeepAlivesEnabled(false)
 
-	// gracefully stop gRPC server first
-	s.GRPCServer.GracefulStop()
-
 	// gracefully stop http server
 	s.httpServerShutdown()
+
+	// gracefully stop gRPC server
+	s.GRPCServer.GracefulStop()
+
 	s.shutdownFunc() // exec shutdown function
 }
 
@@ -358,16 +359,14 @@ func (s *Service) startGRPCAndHTTPServer() error {
 		return err
 	}
 
-	// http server and h2c handler
-	// create an http mux
-	httpMux := http.NewServeMux()
-	httpMux.Handle("/", s.mux)
-
 	// gRPC HTTP server address
 	s.gRPCHTTPServer.Addr = s.gRPCHTTPAddress
 
+	// create an http mux
+	otherHandler := s.gRPCHTTPHandler(s.mux)
+
 	// convert HTTP requests to http2
-	s.gRPCHTTPServer.Handler = GRPCHandlerFunc(s.GRPCServer, httpMux)
+	s.gRPCHTTPServer.Handler = GRPCHandlerFunc(s.GRPCServer, otherHandler)
 	return s.gRPCHTTPServer.ListenAndServe()
 }
 
@@ -377,6 +376,9 @@ func (s *Service) stopGRPCAndHTTPServer() {
 
 	// gracefully stop http server
 	s.httpServerShutdown()
+
+	// gracefully stop gRPC server
+	s.GRPCServer.GracefulStop()
 
 	// exec shutdown function
 	s.shutdownFunc()
@@ -389,7 +391,6 @@ func (s *Service) httpServerShutdown() {
 		context.Background(),
 		s.shutdownTimeout,
 	)
-
 	defer cancel()
 
 	// gracefully stop http server
@@ -410,9 +411,9 @@ func (s *Service) httpServerShutdown() {
 
 	select {
 	case <-ctx.Done():
-		s.logger.Printf("Server shutdown ctx cancel error: %v", ctx.Err())
+		s.logger.Printf("http server shutdown ctx cancel error: %v", ctx.Err())
 	case <-done:
-		s.logger.Printf("Server shutdown success")
+		s.logger.Printf("http server shutdown success")
 	}
 }
 
@@ -480,7 +481,7 @@ func (s *Service) stopGRPCServer() {
 			close(done)
 		}()
 
-		// stoop grpc server
+		// stop grpc server
 		s.GRPCServer.GracefulStop()
 
 		// exec shutdown function
@@ -489,9 +490,9 @@ func (s *Service) stopGRPCServer() {
 
 	select {
 	case <-done:
-		s.logger.Printf("stop server done\n")
+		s.logger.Printf("stop gRPC server done\n")
 	case <-ctx.Done():
-		s.logger.Printf("stop server context timeout\n")
+		s.logger.Printf("stop gRPC server context timeout\n")
 	}
 
 	s.logger.Printf("gRPC server shutdown success")
@@ -536,15 +537,16 @@ func (s *Service) startGRPCGateway() error {
 }
 
 func (s *Service) appRoutes() error {
-	for _, route := range s.routes {
+	for k := range s.routes {
+		route := s.routes[k]
 		if !strings.HasPrefix(route.Path, "/") {
 			route.Path = "/" + route.Path
 		}
 
+		handler := route.Handler
 		err := s.mux.HandlePath(route.Method, route.Path, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
-			route.Handler(w, r)
+			handler(w, r)
 		})
-
 		if err != nil {
 			s.logger.Printf("add router error:%s,current method:%s path:%s invalid", err.Error(),
 				route.Method, route.Path)
