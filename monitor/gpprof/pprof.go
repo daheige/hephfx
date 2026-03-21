@@ -18,6 +18,7 @@ func New() *http.ServeMux {
 	httpMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	httpMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	httpMux.HandleFunc("/check", Check)
+	httpMux.HandleFunc("/healthz", Check)
 
 	return httpMux
 }
@@ -36,7 +37,8 @@ func Run(httpMux *http.ServeMux, port uint16) {
 		}()
 
 		address := fmt.Sprintf("0.0.0.0:%d", port)
-		log.Printf("Starting go PProf run on::%d request path is /debug/pprof\n", port)
+		log.Printf("Starting go PProf run on: %s request path is /debug/pprof\n", address)
+		log.Printf("Go service healthz run on: %s request path is /healthz\n", address)
 		if err := http.ListenAndServe(address, httpMux); err != nil {
 			log.Println("PProf listen error:", err)
 		}
@@ -46,8 +48,10 @@ func Run(httpMux *http.ServeMux, port uint16) {
 // Check PProf心跳检测
 func Check(w http.ResponseWriter, r *http.Request) {
 	m := map[string]interface{}{
-		"alive": true,
-		"time":  time.Now().Format("2006-01-02 15:04:05"),
+		"code":    0,
+		"message": "ok",
+		"alive":   true,
+		"time":    time.Now().Format("2006-01-02 15:04:05"),
 	}
 
 	b, _ := json.Marshal(m)

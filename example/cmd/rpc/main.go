@@ -24,7 +24,6 @@ func main() {
 	)
 
 	grpcPort := 50051
-
 	// 健康检查路由地址，可以根据实际情况添加
 	routerOpts := micro.WithRoutes(micro.Route{
 		Method: "GET",
@@ -42,15 +41,31 @@ func main() {
 		},
 	})
 
+	// 自定义grpc http handler，功能可选
+	// grpcHTTPHandler := micro.WithGRPCHTTPHandler(func(mux *runtime.ServeMux) http.Handler {
+	// 	// 自定义gin路由地址
+	// 	router := initHttpRouter()
+	// 	// 如果proto文件中定义的路由地址找不到，就走gin http定义的路由规则
+	// 	router.NoRoute(func(c *gin.Context) {
+	// 		mux.ServeHTTP(c.Writer, c.Request)
+	// 	})
+	//
+	// 	return router
+	// })
+
 	// 创建grpc微服务实例
 	s := micro.NewService(
 		fmt.Sprintf("0.0.0.0:%d", grpcPort),
 
+		// 在不同的地址上运行grpc http gateway
+		// micro.WithGRPCHTTPAddress(fmt.Sprintf("0.0.0.0:%d", 8080)),
+
 		// start grpc and http gateway use one address
 		micro.WithEnableGRPCShareAddress(),
-
-		// micro.WithGRPCHTTPAddress(fmt.Sprintf("0.0.0.0:%d", 8080)),
-		micro.WithHandlerFromEndpoints(pb.RegisterGreeterHandlerFromEndpoint), // register http endpoint
+		// register http endpoint
+		micro.WithHandlerFromEndpoints(pb.RegisterGreeterHandlerFromEndpoint),
+		// 自定义 grpc http handler
+		// grpcHTTPHandler,
 
 		micro.WithLogger(micro.LoggerFunc(log.Printf)),
 		micro.WithShutdownTimeout(5*time.Second),
@@ -98,3 +113,23 @@ func (s *GreeterServer) SayHello(ctx context.Context, req *pb.HelloReq) (*pb.Hel
 
 	return reply, nil
 }
+
+// initHttpRouter 自定义 gin 路由
+// func initHttpRouter() *gin.Engine {
+// 	router := gin.New()
+// 	router.GET("/v1/healthz", func(c *gin.Context) {
+// 		c.JSON(http.StatusOK, gin.H{
+// 			"code":    0,
+// 			"message": "Ok",
+// 			"active":  true,
+// 		})
+// 	})
+//
+// 	router.GET("/ping", func(c *gin.Context) {
+// 		c.JSON(http.StatusOK, gin.H{
+// 			"message": "pong",
+// 		})
+// 	})
+//
+// 	return router
+// }

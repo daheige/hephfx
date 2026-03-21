@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 
 	"github.com/daheige/hephfx/ctxkeys"
+	"github.com/daheige/hephfx/gutils"
 )
 
 var (
@@ -76,10 +78,74 @@ func GetStringFromMD(md metadata.MD, key ctxkeys.CtxKey) string {
 
 // SetCtxValue returns ctx when you set key/value into ctx
 func SetCtxValue(ctx context.Context, key ctxkeys.CtxKey, val interface{}) context.Context {
-	return context.WithValue(ctx, key.String(), val)
+	return context.WithValue(ctx, key, val)
 }
 
 // GetCtxValue returns ctx when you set key/value into ctx
 func GetCtxValue(ctx context.Context, key ctxkeys.CtxKey) interface{} {
 	return ctx.Value(key)
+}
+
+// NewContext create a new context from request,eg:http request
+func NewContext(ctx context.Context) context.Context {
+	requestID, ok := ctx.Value(ctxkeys.XRequestID).(string)
+	if requestID == "" || !ok {
+		requestID = gutils.Uuid()
+	}
+
+	newCtx := context.WithValue(ctx, ctxkeys.XRequestID, requestID)
+	return newCtx
+}
+
+// NewTimeoutContext create a new context from request,eg:http request
+func NewTimeoutContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	newCtx, cancel := context.WithTimeout(NewContext(ctx), timeout)
+	return newCtx, cancel
+}
+
+// NewRPCContext new a context for grpc client call
+func NewRPCContext(ctx context.Context, m ...map[string]string) context.Context {
+	requestID, ok := ctx.Value(ctxkeys.XRequestID).(string)
+	if requestID == "" || !ok {
+		requestID = gutils.Uuid()
+	}
+
+	// set request-id into outgoing ctx metadata
+	md := OutgoingMD(ctx)
+	md.Set(ctxkeys.XRequestID.String(), requestID)
+	if len(m) > 0 {
+		for _, meta := range m {
+			if len(meta) > 0 {
+				for k, v := range meta {
+					md.Set(k, v)
+				}
+			}
+		}
+	}
+
+	newCtx := metadata.NewOutgoingContext(ctx, md)
+	return newCtx
+}
+
+// GetRPCRequestID returns request-id from grpc request metadata.FromIncomingContext
+func GetRPCRequestID(ctx context.Context) string {
+	md := IncomingMD(ctx) // get request metadata
+	requestID := GetStringFromMD(md, ctxkeys.XRequestID)
+	if requestID == "" {
+		requestID = gutils.Uuid()
+	}
+
+	return requestID
+}
+
+// SetRPCRequestID set request-id into incoming metadata
+func SetRPCRequestID(ctx context.Context) metadata.MD {
+	md := IncomingMD(ctx) // get request metadata
+	requestID := GetStringFromMD(md, ctxkeys.XRequestID)
+	if requestID == "" {
+		requestID = gutils.Uuid()
+		md.Set(ctxkeys.XRequestID.String(), requestID)
+	}
+	
+	return md
 }

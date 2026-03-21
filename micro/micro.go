@@ -277,7 +277,7 @@ func (s *Service) startTwoServices() error {
 	go func() {
 		defer s.recovery()
 
-		s.logger.Printf("Starting gRPC http gateway server listening on %s\n", s.gRPCHTTPAddress)
+		s.logger.Printf("Starting gRPC http gateway server listening on: %s\n", s.gRPCHTTPAddress)
 		errChan2 <- s.startGRPCGateway()
 	}()
 
@@ -323,7 +323,7 @@ func (s *Service) startUseOneAddress() error {
 	go func() {
 		defer s.recovery()
 
-		s.logger.Printf("Starting gRPC http gateway and gRPC server listening on %s\n", s.gRPCHTTPAddress)
+		s.logger.Printf("Starting gRPC http gateway and gRPC server listening on: %s\n", s.gRPCHTTPAddress)
 		errChan <- s.startGRPCAndHTTPServer()
 	}()
 
@@ -354,7 +354,7 @@ func (s *Service) startGRPCAndHTTPServer() error {
 	}
 
 	// apply routes
-	err = s.appRoutes()
+	err = s.applyRoutes()
 	if err != nil {
 		return err
 	}
@@ -498,18 +498,18 @@ func (s *Service) stopGRPCServer() {
 	s.logger.Printf("gRPC server shutdown success")
 }
 
-// startGRPCServer start grpc server.
+// startGRPCServer start grpc server only.
 func (s *Service) startGRPCServer() error {
 	if s.gRPCNetwork == "" {
 		s.gRPCNetwork = "tcp"
 	}
 
-	lis, err := net.Listen(s.gRPCNetwork, s.gRPCAddress)
+	listener, err := net.Listen(s.gRPCNetwork, s.gRPCAddress)
 	if err != nil {
 		return err
 	}
 
-	return s.GRPCServer.Serve(lis)
+	return s.GRPCServer.Serve(listener)
 }
 
 func (s *Service) startGRPCGateway() error {
@@ -525,7 +525,7 @@ func (s *Service) startGRPCGateway() error {
 	}
 
 	// apply routes
-	err = s.appRoutes()
+	err = s.applyRoutes()
 	if err != nil {
 		return err
 	}
@@ -536,7 +536,7 @@ func (s *Service) startGRPCGateway() error {
 	return s.gRPCHTTPServer.ListenAndServe()
 }
 
-func (s *Service) appRoutes() error {
+func (s *Service) applyRoutes() error {
 	for k := range s.routes {
 		route := s.routes[k]
 		if !strings.HasPrefix(route.Path, "/") {
@@ -548,7 +548,7 @@ func (s *Service) appRoutes() error {
 			handler(w, r)
 		})
 		if err != nil {
-			s.logger.Printf("add router error:%s,current method:%s path:%s invalid", err.Error(),
+			s.logger.Printf("add http router error:%s,current method:%s path:%s invalid", err.Error(),
 				route.Method, route.Path)
 			return err
 		}

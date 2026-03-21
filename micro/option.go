@@ -154,6 +154,19 @@ func WithGRPCHTTPAddress(addr string) Option {
 }
 
 // WithGRPCHTTPHandler returns an Option to set gRPC HTTP Server Handler
+// Customizing Gin/chi or gorilla/mux route as grpc gateway http handler
+//
+//	grpcHTTPHandler := micro.WithGRPCHTTPHandler(func(mux *runtime.ServeMux) http.Handler {
+//		// Customizing Gin route
+//		router := initHttpRouter()
+//		// If the route address defined in the proto file cannot be found,
+//		// the route rules defined by gin http will be followed.
+//		router.NoRoute(func(c *gin.Context) {
+//			mux.ServeHTTP(c.Writer, c.Request)
+//		})
+//
+//		return router
+//	})
 func WithGRPCHTTPHandler(h HTTPHandlerFunc) Option {
 	return func(s *Service) {
 		s.gRPCHTTPHandler = h
