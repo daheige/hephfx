@@ -20,7 +20,7 @@ func main() {
 	logger.Default(
 		logger.WithStdout(true),
 		logger.WithJsonFormat(true),
-		logger.WriteToFile(false),
+		logger.WithWriteToFile(false),
 	)
 
 	grpcPort := 50051

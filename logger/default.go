@@ -13,27 +13,24 @@ var (
 	// logEntry default logger entry.
 	logEntry Logger
 
-	// DefaultLogDir default log dir.
-	DefaultLogDir = "./logs"
-
-	// DefaultLogFile default log file.
-	DefaultLogFile = "go-app.log"
+	// defaultLogDir default log dir.
+	defaultLogDir = "./logs"
 )
 
-// Default 默认zap logger对象
+// Default 初始化默认zap logger接口
+// 默认日志写到终端中
 func Default(opts ...Option) {
 	options := []Option{
-		WithLogDir(DefaultLogDir),       // 日志目录
-		WithLogFilename(DefaultLogFile), // 日志文件名，默认zap.log
-		WithJsonFormat(true),            // json格式化
-		WithCallerSkip(2),               // 如果基于这个Logger包，再包装一次，这个skip = 2,以此类推
-		WithEnableColor(false),          // 日志是否染色，默认不染色
-		WithLogLevel(zap.DebugLevel),    // 设置日志打印最低级别,如果不设置默认为info级别
-		WithMaxAge(3),                   // 最大保存3天
-		WithMaxSize(200),                // 每个日志文件最大20MB
-		WithCompress(false),             // 日志不压缩
-		WithStdout(false),               // 日志不输出到终端，可用opts方式改变stdout的值
-		WriteToFile(true),               // 默认开启日志写入文件中
+		WithJsonFormat(true),        // 默认json格式化输出
+		WithCallerSkip(2),           // 如果基于这个Logger包，需要设置适当的skip
+		WithLogLevel(zap.InfoLevel), // 设置日志打印最低级别,如果不设置,默认为info级别
+		WithStdout(true),            // 日志默认输出到终端
+
+		// WithLogDir(defaultLogDir),       // 日志目录
+		// WithLogFilename(defaultLogFile), // 日志文件名，默认zap.log
+		// WithMaxAge(3),                   // 最大保存3天
+		// WithMaxSize(200),                // 每个日志文件最大200MB
+		// WithWriteToFile(true),           // 默认开启日志写入文件中
 	}
 
 	if len(opts) > 0 {

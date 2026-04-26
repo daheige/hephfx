@@ -10,7 +10,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/daheige/hephfx/ctxkeys"
-	"github.com/daheige/hephfx/gutils"
 )
 
 // TestLogger test logger.
@@ -19,20 +18,22 @@ func TestLogger(t *testing.T) {
 	var logger = New(
 		WithLogDir("./logs"),
 		WithLogFilename("zap.log"),
-		WithStdout(true), // 一般生产环境，建议不输出到stdout
+		WithWriteToFile(true), // 开启日志写入文件
+		WithMaxAge(3),
+		WithMaxSize(20),
+		WithCompress(false),
+
+		WithStdout(true), // 一般生产环境，建议输出到stdout
 		WithJsonFormat(true),
 		WithAddCaller(true),
 		WithCallerSkip(1), // 如果基于这个Logger包，再包装一次，这个skip = 2,以此类推
 		WithEnableColor(false),
 		WithLogLevel(zap.DebugLevel), // 设置日志打印最低级别,如果不设置默认为info级别
-		WithMaxAge(3),
-		WithMaxSize(20),
-		WithCompress(false),
 		WithHostname("myapp.com"),
 	)
 
 	// reqId := RndUUID()
-	reqId := gutils.RndUUIDMd5()
+	reqId := RndUUIDMd5()
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, ctxkeys.XRequestID, reqId)
 	logger.Info(ctx, "hello", map[string]interface{}{
@@ -69,17 +70,20 @@ func TestLogger(t *testing.T) {
 // TestNewLogSugar test log sugar.
 func TestNewLogSugar(t *testing.T) {
 	// 测试log sugar方法
-	logSugar := NewLogSugar(WithLogDir("./logs"),
+	logSugar := NewLogSugar(
+		WithLogDir("./logs"),
 		WithLogFilename("zap-sugar.log"),
-		WithStdout(true), // 一般生产环境，建议不输出到stdout
+		WithWriteToFile(true),
+		WithMaxAge(3),
+		WithMaxSize(20),
+		WithCompress(false),
+
+		WithStdout(true), // 一般生产环境，建议输出到stdout
 		WithJsonFormat(true),
 		WithAddCaller(true),
 		WithCallerSkip(1), // 如果基于这个Logger包，再包装一次，这个skip = 2,以此类推
 		WithEnableColor(false),
 		WithLogLevel(zap.DebugLevel), // 设置日志打印最低级别,如果不设置默认为info级别
-		WithMaxAge(3),
-		WithMaxSize(20),
-		WithCompress(false),
 		WithHostname("myapp.com"),
 	)
 
@@ -106,20 +110,22 @@ func BenchmarkNew(b *testing.B) {
 	var logger = New(
 		WithLogDir("./logs"),
 		WithLogFilename("zap-bench.log"),
-		WithStdout(true), // 一般生产环境，建议不输出到stdout
+		WithWriteToFile(true),
+		WithMaxAge(3),
+		WithMaxSize(20),
+		WithCompress(false),
+
+		WithStdout(true), // 一般生产环境，建议输出到stdout
 		WithJsonFormat(true),
 		WithAddCaller(true),
 		WithCallerSkip(1), // 如果基于这个Logger包，再包装一次，这个skip = 2,以此类推
 		WithEnableColor(false),
 		WithLogLevel(zap.DebugLevel), // 设置日志打印最低级别,如果不设置默认为info级别
-		WithMaxAge(3),
-		WithMaxSize(20),
-		WithCompress(false),
 		// WithHostname("myapp.com"),
 	)
 
 	// reqId := RndUUID()
-	reqId := gutils.RndUUIDMd5()
+	reqId := RndUUIDMd5()
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, ctxkeys.XRequestID, reqId)
 	logger.Info(ctx, "exec begin")
@@ -147,7 +153,7 @@ func BenchmarkNew(b *testing.B) {
 // BenchmarkRandInt64-12    	  101911	     10942 ns/op
 func BenchmarkRandInt64(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		rnd := gutils.RandInt64(1, 10000)
+		rnd := RandInt64(1, 10000)
 		log.Println("rnd: ", rnd)
 	}
 }
@@ -158,7 +164,7 @@ func BenchmarkRandInt64(b *testing.B) {
 // BenchmarkRndUUIDMd5-12    	   92716	     11908 ns/op
 func BenchmarkRndUUIDMd5(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		s := gutils.RndUUIDMd5()
+		s := RndUUIDMd5()
 		log.Println("rnd uuid: ", s)
 	}
 }
@@ -169,7 +175,7 @@ func BenchmarkRndUUIDMd5(b *testing.B) {
 // BenchmarkRndUUID-12    	  101452	     11021 ns/op
 func BenchmarkRndUUID(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		s := gutils.RndUUID()
+		s := RndUUID()
 		log.Println("rnd uuid: ", s)
 	}
 }

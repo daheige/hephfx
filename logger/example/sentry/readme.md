@@ -1,12 +1,62 @@
-# golang logger
-基于uber zap封装而成的logger模块，可用于go应用中记录操作日志和错误日志sentry上报。功能特性如下：
-- 支持日志自动切割和最大保留时长
-- 支持日志json格式化处理
-- 支持日志同时输出到文件和终端
-- 支持日志打印级别和日志染色功能
-- 支持自定义 zap core 注入，例如：sentry错误上报、openobserve日志平台上报，目前已内置sentry错误上报功能
+# sentry上报
+sentry平台建议直接使用 sentry.io 托管的 sentry，当然您也可以自建托管sentry平台。
 
-# logger output and sentry report
+## install
+Install our Go SDK using go get:
+```shell
+go get github.com/getsentry/sentry-go
+```
+
+## Configure SDK
+Import and initialize the Sentry SDK early in your application's setup:
+```go
+package main
+
+import (
+  "log"
+
+  "github.com/getsentry/sentry-go"
+)
+
+func main() {
+  err := sentry.Init(sentry.ClientOptions{
+    Dsn: "your sentry dsn",
+  })
+  if err != nil {
+    log.Fatalf("sentry.Init: %s", err)
+  }
+}
+```
+
+## Verify
+The quickest way to verify Sentry in your Go program is to capture a message:
+```go
+package main
+
+import (
+  "log"
+  "time"
+
+  "github.com/getsentry/sentry-go"
+)
+
+func main() {
+  err := sentry.Init(sentry.ClientOptions{
+    Dsn: "your sentry dsn",
+  })
+  if err != nil {
+    log.Fatalf("sentry.Init: %s", err)
+  }
+  
+  // Flush buffered events before the program terminates.
+  defer sentry.Flush(2 * time.Second)
+
+  // 测试上报
+  sentry.CaptureMessage("It works!")
+}
+```
+
+# 日志输出和sentry上报示例
 ```go
 package main
 
@@ -31,7 +81,6 @@ func main() {
 	}
 
 	defer sentry.Flush(2 * time.Second)
-	// mock sentry report capture message
 	// sentry.CaptureMessage("It works!")
 
 	logger.Default(
@@ -50,11 +99,4 @@ func main() {
 	logger.Error(context.Background(), "auth error", "uid", 1)
 }
 ```
-sentry上报效果如下：
-![sentry.png](sentry.png)
 
-# zap
-https://github.com/uber-go/zap
-
-# sentry
-https://sentry.io

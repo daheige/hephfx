@@ -7,8 +7,6 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/daheige/hephfx/ctxkeys"
-	"github.com/daheige/hephfx/gutils"
 	"github.com/daheige/hephfx/logger"
 )
 
@@ -18,26 +16,26 @@ var LogEntry logger.Logger
 func main() {
 	// 对于log option 下面的可以根据实际情况使用
 	LogEntry = logger.New(
-		logger.WithLogDir("./logs"),          // 日志目录
-		logger.WithLogFilename("athena.log"), // 日志文件名，默认zap.log
-		logger.WithStdout(true),              // 一般生产环境，建议不输出到stdout
-		logger.WithJsonFormat(true),          // json格式化
-		logger.WithAddCaller(true),           // 打印行号
-		logger.WithCallerSkip(1),             // 如果基于这个Logger包，再包装一次，这个skip = 2,以此类推
-		logger.WithEnableColor(false),        // 日志是否染色，默认不染色
-		logger.WithLogLevel(zap.DebugLevel),  // 设置日志打印最低级别,如果不设置默认为info级别
-		logger.WithMaxAge(3),                 // 最大保存3天
-		logger.WithMaxSize(20),               // 每个日志文件最大20MB
-		logger.WithCompress(false),           // 日志不压缩
-		// logger.WithHostname("myapp.com"),    // 设置hostname
-		logger.WriteToFile(true), // 日志写入文件中
-		logger.WithStdout(false), // 关闭日志写入终端
+		logger.WithLogDir("./logs"),       // 日志目录
+		logger.WithLogFilename("zap.log"), // 日志文件名，默认zap.log
+		logger.WithWriteToFile(true),      // 开启日志写入文件
+
+		logger.WithStdout(true),             // 一般生产环境，建议输出到stdout
+		logger.WithJsonFormat(true),         // json格式化
+		logger.WithAddCaller(true),          // 打印行号
+		logger.WithCallerSkip(1),            // 如果基于这个Logger包，再包装一次，这个skip = 2,以此类推
+		logger.WithEnableColor(false),       // 日志是否染色，默认不染色
+		logger.WithLogLevel(zap.DebugLevel), // 设置日志打印最低级别,如果不设置默认为info级别
+		logger.WithMaxAge(3),                // 最大保存3天
+		logger.WithMaxSize(20),              // 每个日志文件最大20MB
+		logger.WithCompress(false),          // 日志不压缩
+		logger.WithHostname("myapp.com"),    // 设置hostname
 	)
 
 	// 模拟请求id
-	reqId := gutils.RndUUIDMd5()
+	reqId := logger.RndUUIDMd5()
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, ctxkeys.XRequestID, reqId)
+	ctx = context.WithValue(ctx, logger.XRequestID, reqId)
 	LogEntry.Info(ctx, "hello", map[string]interface{}{
 		"a": 1,
 		"b": 12,
@@ -53,7 +51,7 @@ func main() {
 	// DPanic调试信息
 	LogEntry.DPanic(ctx, "panic debug", "abc", 23456, "message", "hello world")
 
-	// 在协程中抛出了panic，然后用Recover进行捕获panic信息
+	// 在协程中抛出了panic，然后用CatchPanic进行捕获panic信息
 	go func() {
 		defer LogEntry.Recover(ctx, "exec panic")
 

@@ -26,3 +26,4 @@ go.work.sum
 
 *.log
 node_modules
+.idea/

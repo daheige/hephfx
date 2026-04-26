@@ -1,14 +1,16 @@
 package logger
 
 import (
+	"time"
+
 	"go.uber.org/zap/zapcore"
 )
 
 // Option option for zapLogWriter
 type Option func(z *zapLogWriter)
 
-// apply add option for zapLogWriter
-func (z *zapLogWriter) apply(opts ...Option) {
+// apply  option for zapLogWriter
+func (z *zapLogWriter) apply(opts []Option) {
 	for _, o := range opts {
 		o(z)
 	}
@@ -42,17 +44,15 @@ func WithAddCaller(b bool) Option {
 	}
 }
 
-/*
-* WithCallerSkip 设置callerSkip
-addCaller = true,并且 callerSkip > 0 会设置zap.AddCallerSkip
-zap源码包中logger.go#260 check func
-check must always be called directly by a method in the Logger interface
-(e.g., Check, Info, Fatal).
-const callerSkipOffset = 2
-这里的callerSkipOffset默认是2
-如果基于这个Logger包，再包装一次，这个 skip = 2,以此类推
-否则 skip=1
-*/
+// WithCallerSkip 设置 skip
+// addCaller = true,并且 callerSkip > 0 会设置zap.AddCallerSkip
+// zap源码包中logger.go#260 check func
+// check must always be called directly by a method in the Logger interface
+// (e.g., Check, Info, Fatal).
+// const callerSkipOffset = 2
+// 这里的callerSkipOffset默认是2
+// 如果基于这个Logger包，再包装一次，这个 skip = 2,以此类推
+// 否则 skip=1
 func WithCallerSkip(skip int) Option {
 	return func(z *zapLogWriter) {
 		z.callerSkip = skip
@@ -67,8 +67,8 @@ func WithLogLevel(level zapcore.Level) Option {
 	}
 }
 
-// WriteToFile 设置日志是否写入文件中
-func WriteToFile(b bool) Option {
+// WithWriteToFile 设置日志是否写入文件中
+func WithWriteToFile(b bool) Option {
 	return func(z *zapLogWriter) {
 		z.logWriteToFile = b
 	}
@@ -113,5 +113,33 @@ func WithEnableColor(b bool) Option {
 func WithHostname(hostname string) Option {
 	return func(z *zapLogWriter) {
 		z.hostname = hostname
+	}
+}
+
+// WithCores 设置 zap cores
+func WithCores(cores ...zapcore.Core) Option {
+	return func(z *zapLogWriter) {
+		z.cores = append(z.cores, cores...)
+	}
+}
+
+// WithEnableSentry 是否开启sentry上报
+func WithEnableSentry(b bool) Option {
+	return func(z *zapLogWriter) {
+		z.enableSentry = b
+	}
+}
+
+// WithSentryFlushTimeout 设置 sentry flush timeout
+func WithSentryFlushTimeout(d time.Duration) Option {
+	return func(z *zapLogWriter) {
+		z.sentryFlushTimeout = d
+	}
+}
+
+// WithSentryLevel 设置 sentry 上报的 zap level
+func WithSentryLevel(level zapcore.Level) Option {
+	return func(z *zapLogWriter) {
+		z.sentryLevel = level
 	}
 }

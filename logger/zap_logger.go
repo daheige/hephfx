@@ -1,4 +1,4 @@
-// logger 基于zap日志库，进行封装的logger库
+// Package logger 基于zap日志库，进行封装的logger库
 // 支持日志自动切割
 package logger
 
@@ -11,12 +11,12 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/daheige/hephfx/ctxkeys"
-	"github.com/daheige/hephfx/gutils"
 )
 
 // defaultHostName default hostname.
@@ -51,26 +51,24 @@ type zapLogWriter struct {
 
 	// zap底层Logger接口
 	fLogger *zap.Logger
+
+	// zap cores 允许外部zap core注入，例如：sentry,openobserve core实现
+	cores []zapcore.Core
+
+	// sentry上报接入
+	enableSentry bool
+	// sentry 异步上报超时时间，默认3s
+	sentryFlushTimeout time.Duration
+
+	// 需要上报的日志级别
+	// 默认只允许错误级别以上的日志上报
+	// 如果需要改变sentry上报的日志级别，调用 WithSentryLevel 函数设置上报的sentry日志级别
+	sentryLevel zapcore.Level
 }
 
 // New 创建一个Logger interface.
 func New(opts ...Option) Logger {
-	z := defaultZapLogEntry()
-
-	z.apply(opts...)
-
-	core, err := z.initCore()
-	if err != nil {
-		log.Fatalln("init zap core error: ", err)
-	}
-
-	// 当 addCaller = true 并且 callerSkip > 0 才会记录文件名和行号
-	if z.addCaller && z.callerSkip > 0 {
-		z.fLogger = zap.New(core, zap.AddCaller(), zap.AddCallerSkip(z.callerSkip))
-	} else {
-		z.fLogger = zap.New(core)
-	}
-
+	z := initWriter(opts)
 	return z
 }
 
@@ -78,37 +76,40 @@ func New(opts ...Option) Logger {
 // 支持Debug,Info,Error,Panic,Warn,Fatal等方法
 // 返回一个*zap.SugaredLogger
 func NewLogSugar(opts ...Option) *zap.SugaredLogger {
-	z := defaultZapLogEntry()
+	z := initWriter(opts)
+	return z.fLogger.Sugar()
+}
 
-	z.apply(opts...)
+// init zapLogWriter
+func initWriter(opts []Option) *zapLogWriter {
+	z := &zapLogWriter{
+		maxAge:         7,
+		maxSize:        512,
+		compress:       false,
+		logLevel:       zapcore.InfoLevel,         // 默认info级别
+		logWriteToFile: false,                     // 默认不写文件
+		logFilename:    filepath.Base(os.Args[0]), // 默认程序运行时名称
+		logDir:         defaultLogDir,
+		stdout:         true, // 默认日志输出到stdout终端
+		jsonFormat:     true, // 默认使用json format
+		hostname:       defaultHostName,
+		cores:          make([]zapcore.Core, 0, 4),
+		sentryLevel:    zapcore.ErrorLevel, // sentry 默认错误级别的日志上报
+	}
 
-	core, err := z.initCore()
+	z.apply(opts)
+
+	err := z.initCores()
 	if err != nil {
 		log.Fatalln("init zap core error: ", err)
 	}
 
+	core := zapcore.NewTee(z.cores...)
 	// 当 addCaller = true 并且 callerSkip > 0 才会记录文件名和行号
 	if z.addCaller && z.callerSkip > 0 {
 		z.fLogger = zap.New(core, zap.AddCaller(), zap.AddCallerSkip(z.callerSkip))
 	} else {
 		z.fLogger = zap.New(core)
-	}
-
-	return z.fLogger.Sugar()
-}
-
-// defaultZapLogEntry create default zapLogWriter
-func defaultZapLogEntry() *zapLogWriter {
-	z := &zapLogWriter{
-		maxAge:      7,
-		maxSize:     512,
-		compress:    false,
-		logLevel:    zapcore.InfoLevel,
-		logFilename: filepath.Base(os.Args[0]), // 默认程序运行时名称
-		logDir:      os.TempDir(),
-		stdout:      true, // 默认日志输出到stdout终端
-		jsonFormat:  true,
-		hostname:    defaultHostName,
 	}
 
 	return z
@@ -203,17 +204,34 @@ func (z *zapLogWriter) parseFields(ctx context.Context, args []interface{}) []za
 		i += 2
 	}
 
-	if curTime := ctx.Value(ctxkeys.LocalTime); curTime == nil {
-		// add time_local 请求本地时间字段
-		fields = append(fields, zap.String(ctxkeys.LocalTime.String(), time.Now().Format(tmFmtWithMS)))
+	fields = append(fields, z.parseCtxFields(ctx)...)
+	return fields
+}
+
+// 解析ctx上面内置的 zap fields
+func (z *zapLogWriter) parseCtxFields(ctx context.Context) []zap.Field {
+	fields := make([]zap.Field, 0, 10)
+	// add time_local 请求本地时间字段
+	if curTime := ctx.Value(ctxkeys.TimeLocal); curTime != nil {
+		timeLocal, _ := curTime.(string)
+		fields = append(fields, zap.String(ctxkeys.TimeLocal.String(), timeLocal))
+	} else {
+		fields = append(fields, zap.String(ctxkeys.TimeLocal.String(), time.Now().Format(tmFmtWithMS)))
 	}
 
-	fields = append(fields, zap.String(ctxkeys.CurHostname.String(), z.hostname))
+	// 当前hostname
+	if host := ctx.Value(ctxkeys.CurHostname); host != nil {
+		hostname, _ := host.(string)
+		fields = append(fields, zap.String(ctxkeys.CurHostname.String(), hostname))
+	} else {
+		fields = append(fields, zap.String(ctxkeys.CurHostname.String(), z.hostname))
+	}
+
 	// request_id 可能是一个数字，但建议请求id使用uuid字符串
 	if reqID := ctx.Value(ctxkeys.XRequestID); reqID != nil {
 		fields = append(fields, zap.Any(ctxkeys.XRequestID.String(), reqID))
 	} else {
-		fields = append(fields, zap.String(ctxkeys.XRequestID.String(), gutils.Uuid()))
+		fields = append(fields, zap.String(ctxkeys.XRequestID.String(), Uuid()))
 	}
 
 	// request ip 地址存在就记录
@@ -237,8 +255,8 @@ func (z *zapLogWriter) parseFields(ctx context.Context, args []interface{}) []za
 	return fields
 }
 
-// initCore 初始化zap core
-func (z *zapLogWriter) initCore() (zapcore.Core, error) {
+// initCores 初始化zap core
+func (z *zapLogWriter) initCores() error {
 	// encoder config
 	encoderConf := zapcore.EncoderConfig{
 		TimeKey:        "time_local", // 本地时间字段
@@ -266,11 +284,11 @@ func (z *zapLogWriter) initCore() (zapcore.Core, error) {
 		}
 
 		if z.logDir == "" {
-			z.logFilename = filepath.Join(os.TempDir(), z.logFilename) // 默认日志文件名称
+			z.logFilename = filepath.Join(defaultLogDir, z.logFilename) // 默认日志文件名称
 		} else {
 			if !z.checkPathExist(z.logDir) {
 				if err := os.MkdirAll(z.logDir, 0755); err != nil {
-					return nil, err
+					return err
 				}
 			}
 
@@ -293,15 +311,28 @@ func (z *zapLogWriter) initCore() (zapcore.Core, error) {
 		opts = append(opts, zapcore.AddSync(os.Stdout))
 	}
 
-	// 创建一个混合WriteSyncer
-	writerSyncer := zapcore.NewMultiWriteSyncer(opts...)
-
-	// json格式化日志
-	if z.jsonFormat {
-		return zapcore.NewCore(zapcore.NewJSONEncoder(encoderConf), writerSyncer, z.logLevel), nil
+	var enc zapcore.Encoder
+	if z.jsonFormat { // json格式化日志
+		enc = zapcore.NewJSONEncoder(encoderConf)
+	} else {
+		enc = zapcore.NewConsoleEncoder(encoderConf)
 	}
 
-	return zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConf), writerSyncer, z.logLevel), nil
+	// 创建一个混合WriteSyncer
+	writerSyncer := zapcore.NewMultiWriteSyncer(opts...)
+	core := zapcore.NewCore(enc, writerSyncer, z.logLevel)
+
+	z.cores = append(z.cores, core)
+
+	if z.enableSentry {
+		if sentry.CurrentHub().Client() == nil {
+			log.Fatalln("sentry not configured")
+		}
+
+		z.cores = append(z.cores, newSentryCore(z.sentryLevel, sentry.CurrentHub(), z.sentryFlushTimeout))
+	}
+
+	return nil
 }
 
 // checkPathExist check file or path exist
