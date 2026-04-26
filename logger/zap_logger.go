@@ -148,7 +148,7 @@ func (z *zapLogWriter) Recover(ctx context.Context, msg string, fields ...interf
 			fields = make([]interface{}, 0, 2)
 		}
 
-		fields = append(fields, ctxkeys.Fullstack.String(), string(debug.Stack()))
+		fields = append(fields, ctxkeys.FullStack.String(), string(debug.Stack()))
 		z.DPanic(ctx, msg, fields...)
 	}
 }

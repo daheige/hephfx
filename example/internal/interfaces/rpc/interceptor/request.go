@@ -11,7 +11,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/daheige/hephfx/ctxkeys"
-	"github.com/daheige/hephfx/gutils"
 	"github.com/daheige/hephfx/logger"
 	"github.com/daheige/hephfx/micro"
 )
@@ -37,14 +36,8 @@ func AccessLog(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo,
 	// log.Printf("client_ip: %s\n", clientIP)
 	// log.Printf("request: %v\n", req)
 
-	// x-request-id
-	var requestId string
-	if logID := ctx.Value(ctxkeys.XRequestID.String()); logID == nil {
-		requestId = gutils.Uuid()
-	} else {
-		requestId, _ = logID.(string)
-	}
-
+	// 从 metadata.FromIncomingContext 中获取上游过来的 x-request-id
+	requestId := micro.GetRPCRequestID(ctx)
 	ctx = context.WithValue(ctx, ctxkeys.XRequestID, requestId)
 	ctx = context.WithValue(ctx, ctxkeys.ClientIP, clientIP)
 	ctx = context.WithValue(ctx, ctxkeys.RequestMethod, info.FullMethod)

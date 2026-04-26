@@ -73,7 +73,7 @@ func Recover(ctx context.Context, msg string, fields ...interface{}) {
 			fields = make([]interface{}, 0, 2)
 		}
 
-		fields = append(fields, ctxkeys.Fullstack.String(), string(debug.Stack()))
+		fields = append(fields, ctxkeys.FullStack.String(), string(debug.Stack()))
 		logEntry.DPanic(ctx, msg, fields...)
 	}
 }

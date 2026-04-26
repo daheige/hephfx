@@ -32,6 +32,6 @@ var (
 	// CurHostname current hostname
 	CurHostname = CtxKey{"hostname"}
 
-	// Fullstack full stack
-	Fullstack = CtxKey{"full_stack"}
+	// FullStack full stack
+	FullStack = CtxKey{"full_stack"}
 )
