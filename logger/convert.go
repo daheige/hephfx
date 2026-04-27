@@ -61,7 +61,12 @@ func FieldToValue(f zap.Field) interface{} {
 	case zapcore.ReflectType, zapcore.StringerType:
 		return f.Interface
 	case zapcore.ErrorType:
-		return f.Interface.(error)
+		err, ok := f.Interface.(error)
+		if ok && err != nil {
+			return err.Error()
+		}
+
+		return fmt.Sprintf("%v", f.Interface)
 	case zapcore.SkipType:
 		break
 	default:
