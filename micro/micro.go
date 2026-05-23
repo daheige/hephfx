@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/daheige/hephfx/ctxkeys"
 	"github.com/daheige/hephfx/gutils"
@@ -75,6 +76,7 @@ type Service struct {
 
 	mux                     *gRuntime.ServeMux        // gRPC http gateway runtime serverMux
 	muxOptions              []gRuntime.ServeMuxOption // gRPC HTTP server mux options
+	enableDefaultProtoJSON  bool                      // gRPC HTTP proto to json mux option,default:true
 	gRPCEndpointDialOptions []grpc.DialOption         // gRPC http gateway dail options
 	routes                  []Route                   // gRPC http custom router rules
 	gRPCHTTPServer          *http.Server              // gRPC http server
@@ -179,7 +181,11 @@ func NewService(address string, opts ...Option) *Service {
 
 		// init gateway mux
 		// apply default marshal option and error handler for mux options
-		s.muxOptions = append(s.muxOptions, defaultMuxOption, gRuntime.WithErrorHandler(s.gRPCHTTPErrorHandler))
+		if s.enableDefaultProtoJSON {
+			s.muxOptions = append(s.muxOptions, defaultProtoJSONMuxOption)
+		}
+
+		s.muxOptions = append(s.muxOptions, gRuntime.WithErrorHandler(s.gRPCHTTPErrorHandler))
 
 		// init annotators
 		for _, annotator := range s.annotators {
@@ -558,17 +564,33 @@ func (s *Service) applyRoutes() error {
 }
 
 // refer: https://github.com/golang/protobuf/blob/v1.4.3/jsonpb/encode.go#L30
-var defaultMuxOption = gRuntime.WithMarshalerOption(gRuntime.MIMEWildcard, &gRuntime.JSONPb{})
+var defaultProtoJSONMuxOption = gRuntime.WithMarshalerOption(gRuntime.MIMEWildcard, &gRuntime.JSONPb{
+	MarshalOptions: protojson.MarshalOptions{
+		// 输出未填充的字段（包括默认值、空列表等）
+		EmitUnpopulated: true,
+		// JSON 字段名使用proto文件中定义的原始名称（通常是snake_case，如 user_id），而不是转换为驼峰命名
+		UseProtoNames: true,
+		// 枚举输出为字符串
+		// 枚举值在 JSON 中以‌字符串名称‌形式输出（如 "STATUS_ACTIVE"），而不是数字，如 1
+		UseEnumNumbers: false,
+	},
+	UnmarshalOptions: protojson.UnmarshalOptions{
+		// 反序列化时，容忍前端多余的字段
+		// 在解析前端传来的 JSON 时，如果包含 Protobuf 消息中未定义的字段，直接忽略它们，而不是返回错误。
+		DiscardUnknown: true,
+	},
+})
 
 func defaultService() *Service {
 	s := &Service{
-		gRPCNetwork:        "tcp",
-		shutdownTimeout:    5 * time.Second,
-		interruptSignals:   interruptSignals,
-		streamInterceptors: make([]grpc.StreamServerInterceptor, 0, 20),
-		unaryInterceptors:  make([]grpc.UnaryServerInterceptor, 0, 20),
-		serverOptions:      make([]grpc.ServerOption, 0, 8),
-		logger:             dummyLogger,
+		gRPCNetwork:            "tcp",
+		shutdownTimeout:        5 * time.Second,
+		interruptSignals:       interruptSignals,
+		streamInterceptors:     make([]grpc.StreamServerInterceptor, 0, 20),
+		unaryInterceptors:      make([]grpc.UnaryServerInterceptor, 0, 20),
+		serverOptions:          make([]grpc.ServerOption, 0, 8),
+		logger:                 dummyLogger,
+		enableDefaultProtoJSON: true,
 	}
 
 	// default shutdown function

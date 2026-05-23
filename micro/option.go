@@ -186,3 +186,10 @@ func WithEnableGRPCShareAddress() Option {
 		s.enableGRPCShareAddress = true
 	}
 }
+
+// WithEnableDefaultProtoJSON set protoJSON
+func WithEnableDefaultProtoJSON(b bool) Option {
+	return func(s *Service) {
+		s.enableDefaultProtoJSON = b
+	}
+}
