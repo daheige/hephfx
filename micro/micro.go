@@ -74,10 +74,10 @@ type Service struct {
 	// note:If you need to start the HTTP gateway service, you must set this parameter
 	handlerFromEndpoints []HandlerFromEndpoint // http gw endpoint
 
-	mux                     *gRuntime.ServeMux        // gRPC http gateway runtime serverMux
+	mux                     *gRuntime.ServeMux        // gRPC http gateway runtime ServeMux
 	muxOptions              []gRuntime.ServeMuxOption // gRPC HTTP server mux options
 	enableDefaultProtoJSON  bool                      // gRPC HTTP proto to json mux option,default:true
-	gRPCEndpointDialOptions []grpc.DialOption         // gRPC http gateway dail options
+	gRPCEndpointDialOptions []grpc.DialOption         // gRPC http gateway DialOption
 	routes                  []Route                   // gRPC http custom router rules
 	gRPCHTTPServer          *http.Server              // gRPC http server
 	gRPCHTTPAddress         string                    // gRPC http gateway address,eg:0.0.0.0:8080
@@ -111,7 +111,7 @@ func NewService(address string, opts ...Option) *Service {
 	// install prometheus interceptor
 	if s.enablePrometheus {
 		// NewServerMetrics returns a new ServerMetrics object that has server interceptor methods.
-		// NOTE: Remember to register ServerMetrics object by using prometheus registry
+		// NOTE: Remember to register ServerMetrics object by using Prometheus registry
 		// e.g. prometheus.MustRegister(myServerMetrics).
 		serverMetrics := gPrometheus.NewServerMetrics(s.serverMetricsOptions...)
 		prometheus.MustRegister(serverMetrics)
@@ -247,7 +247,7 @@ func (s *Service) startGRPCService() error {
 }
 
 // startTwoServices starts the microservice with listening on the ports
-// start grpc gateway and http server on different port
+// start gRPC server and gRPC http gateway server on different port
 func (s *Service) startTwoServices() error {
 	if s.gRPCHTTPAddress == s.gRPCAddress {
 		return errors.New("gRPC server and gRPC http gateway address are the same")
@@ -349,24 +349,10 @@ func (s *Service) startGRPCAndHTTPServer() error {
 	}
 
 	s.gRPCHTTPAddress = s.gRPCAddress
-	ctx := context.Background()
-	var err error
-	for _, h := range s.handlerFromEndpoints {
-		err = h(ctx, s.mux, s.gRPCAddress, s.gRPCEndpointDialOptions)
-		if err != nil {
-			s.logger.Printf("register handler from endPoint error: %s\n", err.Error())
-			return err
-		}
-	}
-
-	// apply routes
-	err = s.applyRoutes()
+	err := s.registerGRPCHTTPEndpoints()
 	if err != nil {
 		return err
 	}
-
-	// gRPC HTTP server address
-	s.gRPCHTTPServer.Addr = s.gRPCHTTPAddress
 
 	// create an http mux
 	otherHandler := s.gRPCHTTPHandler(s.mux)
@@ -518,8 +504,8 @@ func (s *Service) startGRPCServer() error {
 	return s.GRPCServer.Serve(listener)
 }
 
-func (s *Service) startGRPCGateway() error {
-	// Register http gw handlerFromEndpoint
+// register gRPC http gateway handlerFromEndpoint
+func (s *Service) registerGRPCHTTPEndpoints() error {
 	ctx := context.Background()
 	var err error
 	for _, h := range s.handlerFromEndpoints {
@@ -538,6 +524,15 @@ func (s *Service) startGRPCGateway() error {
 
 	// http server
 	s.gRPCHTTPServer.Addr = s.gRPCHTTPAddress
+	return nil
+}
+
+func (s *Service) startGRPCGateway() error {
+	err := s.registerGRPCHTTPEndpoints()
+	if err != nil {
+		return err
+	}
+
 	s.gRPCHTTPServer.Handler = s.gRPCHTTPHandler(s.mux)
 	return s.gRPCHTTPServer.ListenAndServe()
 }
@@ -621,8 +616,8 @@ func defaultGRPCHTTPHandler(mux *gRuntime.ServeMux) http.Handler {
 }
 
 // GRPCHandlerFunc uses the standard library h2c to convert http requests to http2
-// In this way, you can co-exist with go grpc and http services, and use one port
-// to provide both grpc services and http services.
+// In this way, you can co-exist with go gRPC and http gateway services, and use one port
+// to provide both gRPC service and http services.
 // In June 2018, the golang.org/x/net/http2/h2c standard library representing the "h2c"
 // logo was officially merged in, and since then we can use the official standard library (h2c)
 // This standard library implements the unencrypted mode of HTTP/2,
@@ -631,7 +626,7 @@ func defaultGRPCHTTPHandler(mux *gRuntime.ServeMux) http.Handler {
 // The main internal logic is to intercept all h2c traffic, then hijack and redirect it
 // to the corresponding handler according to different request traffic types to process.
 // If a request is a h2c connection, it's hijacked and redirected to
-// s.ServeConn. Otherwise the returned Handler just forwards requests to http.
+// s.ServeConn. Otherwise, the returned Handler just forwards requests to http.
 func GRPCHandlerFunc(grpcServer *grpc.Server, otherHandler http.Handler) http.Handler {
 	return h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ProtoMajor >= 2 && strings.Contains(r.Header.Get("Content-Type"), "application/grpc") {
