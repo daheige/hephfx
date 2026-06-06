@@ -259,7 +259,7 @@ func (z *zapLogWriter) parseCtxFields(ctx context.Context) []zap.Field {
 func (z *zapLogWriter) initCores() error {
 	// encoder config
 	encoderConf := zapcore.EncoderConfig{
-		TimeKey:        "time_local", // 本地时间字段
+		TimeKey:        "time_server", // 时间字段
 		LevelKey:       "level",
 		MessageKey:     "msg",
 		CallerKey:      "caller_line",
