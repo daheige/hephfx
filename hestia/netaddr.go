@@ -1,6 +1,7 @@
 package hestia
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -73,5 +74,5 @@ func localIPv4Host() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("not found ipv4 address")
+	return "", errors.New("not found ipv4 address")
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,7 +29,7 @@ func NewDiscovery(endpoints []string, opts ...Option) (hestia.Discovery, error) 
 	opt := &Options{
 		endpoints:    endpoints,
 		dialTimeout:  5 * time.Second,
-		prefix:       "hestia/registry-etcd",
+		prefix:       "/hestia/registry-etcd",
 		disableWatch: true, // disable watch
 	}
 
@@ -48,13 +49,17 @@ func NewDiscovery(endpoints []string, opts ...Option) (hestia.Discovery, error) 
 		disableWatch: opt.disableWatch,
 	}
 
+	e.prefix = strings.TrimPrefix(e.prefix, "/")
+	e.prefix = strings.TrimSuffix(e.prefix, "/")
+	e.prefix = fmt.Sprintf("/%s", e.prefix) // 格式为/services
+
 	return e, nil
 }
 
 // GetServices returns a list of instances
 // After we obtain the service instance, we can get the currently available service instance
 // from the service list according to different strategies.
-func (e *etcdDiscovery) GetServices(name string) ([]*hestia.Service, error) {
+func (e *etcdDiscovery) GetServices(ctx context.Context, name string, version string) ([]*hestia.Service, error) {
 	var (
 		services []*hestia.Service
 		exist    bool
@@ -67,7 +72,7 @@ func (e *etcdDiscovery) GetServices(name string) ([]*hestia.Service, error) {
 
 	if !exist {
 		var err error
-		services, err = e.getServicesByName(name)
+		services, err = e.getServicesByName(ctx, name, version)
 		if err != nil {
 			return nil, err
 		}
@@ -75,15 +80,12 @@ func (e *etcdDiscovery) GetServices(name string) ([]*hestia.Service, error) {
 			return nil, hestia.ErrServicesNotFound
 		}
 
+		e.mu.Lock()
+		e.serviceList[name] = services
+		e.mu.Unlock()
+
 		if !e.disableWatch {
-			e.mu.Lock()
-			e.serviceList[name] = services
-			e.mu.Unlock()
-			go func() {
-				e.watch(name)
-			}()
-		} else {
-			e.serviceList[name] = services
+			go e.watch(context.WithoutCancel(ctx), name, version)
 		}
 	}
 
@@ -92,8 +94,8 @@ func (e *etcdDiscovery) GetServices(name string) ([]*hestia.Service, error) {
 
 // Get returns an available service instance based on the specified service selection strategy.
 // the selection strategy is RoundRobinHandler
-func (e *etcdDiscovery) Get(name string, strategyHandler ...hestia.StrategyHandler) (*hestia.Service, error) {
-	services, err := e.GetServices(name)
+func (e *etcdDiscovery) Get(ctx context.Context, name string, version string, strategyHandler ...hestia.StrategyHandler) (*hestia.Service, error) {
+	services, err := e.GetServices(ctx, name, version)
 	if err != nil {
 		return nil, err
 	}
@@ -113,42 +115,55 @@ func (e *etcdDiscovery) String() string {
 }
 
 // listen services change
-func (e *etcdDiscovery) watch(name string) {
-	key := fmt.Sprintf("%s/%s", e.prefix, name)
-	respChan := e.client.Watch(context.Background(), key, clientv3.WithPrefix())
-	log.Printf("watch etcd prefix:%v\n", key)
-	for resp := range respChan {
-		for _, event := range resp.Events {
-			switch event.Type {
-			case clientv3.EventTypePut, clientv3.EventTypeDelete: // 修改或新增
-				// 数据有变更，需要重新加载
-				e.reload(key, name)
-			}
-		}
-	}
-}
-
-func (e *etcdDiscovery) reload(key string, name string) {
-	go func() {
-		e.mu.Lock()
-		defer e.mu.Unlock()
-
-		log.Printf("reload etcd prefix:%s services", key)
-		services, err := e.getServicesByName(name)
+func (e *etcdDiscovery) watch(ctx context.Context, name string, version string) {
+	key := e.discoveryKey(name, version)
+	e.watchWithCallback(ctx, name, version, func(services []*hestia.Service, err error) {
 		if err != nil {
 			log.Printf("reload etcd prefix:%s services error:%v", key, err)
 			return
 		}
 
+		e.mu.Lock()
 		e.serviceList[name] = services
-	}()
+		e.mu.Unlock()
+	})
 }
 
-func (e *etcdDiscovery) getServicesByName(name string) ([]*hestia.Service, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+// watchWithCallback watches the service prefix and invokes callback on every change.
+// It is package-private so the etcd resolver can consume real-time updates without
+// exposing watch semantics in the public Discovery API.
+func (e *etcdDiscovery) watchWithCallback(ctx context.Context, name string, version string,
+	callback func([]*hestia.Service, error)) {
+	key := e.discoveryKey(name, version)
+	// log.Printf("watch etcd prefix:%v\n", key)
+	respChan := e.client.Watch(ctx, key, clientv3.WithPrefix())
+	for resp := range respChan {
+		for _, event := range resp.Events {
+			switch event.Type {
+			case clientv3.EventTypePut, clientv3.EventTypeDelete:
+				services, err := e.getServicesByName(ctx, name, version)
+				callback(services, err)
+			}
+		}
+	}
+}
+
+func (e *etcdDiscovery) discoveryKey(name, version string) string {
+	var key string
+	if version == "" {
+		key = fmt.Sprintf("%s/%s/", e.prefix, name)
+	} else {
+		key = fmt.Sprintf("%s/%s/%s/", e.prefix, name, version)
+	}
+
+	return key
+}
+
+func (e *etcdDiscovery) getServicesByName(ctx context.Context, name string, version string) ([]*hestia.Service, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
 	defer cancel()
 
-	key := fmt.Sprintf("%s/%s", e.prefix, name)
+	key := e.discoveryKey(name, version)
 	resp, err := e.client.Get(ctx, key, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err

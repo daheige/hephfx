@@ -1,6 +1,7 @@
 package etcd
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"testing"
@@ -24,7 +25,8 @@ func TestRegistry(t *testing.T) {
 		Created: time.Now().Format("2006-01-02 15:04:05"),
 	}
 
-	err = r.Register(s)
+	ctx := context.Background()
+	err = r.Register(ctx, s)
 	if err != nil {
 		log.Printf("failed to register service: %v", err)
 	}
@@ -32,9 +34,9 @@ func TestRegistry(t *testing.T) {
 	time.Sleep(100 * time.Second)
 
 	// mock service exit
-	err = r.Deregister(s)
+	err = r.Deregister(ctx, s)
 	if err != nil {
-		log.Printf("failed to register service: %v", err)
+		log.Printf("failed to deregister service: %v", err)
 	}
 }
 
@@ -46,14 +48,15 @@ func TestDiscovery(t *testing.T) {
 	// 测试watch功能
 	// r, err := NewDiscovery([]string{
 	// 	"http://127.0.0.1:12379",
-	// }, WithDiscoveryWatched())
+	// }, WithEnableWatched())
 
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	ctx := context.Background()
 	for i := 0; i < 2; i++ { // mock obtaining the service list multiple times
-		services, err := r.GetServices("my-test")
+		services, err := r.GetServices(ctx, "my-test", "v1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,7 +66,7 @@ func TestDiscovery(t *testing.T) {
 	}
 
 	time.Sleep(2 * time.Second)
-	services, err := r.GetServices("my-test")
+	services, err := r.GetServices(ctx, "my-test", "v1")
 	if err != nil {
 		t.Fatal(err)
 	}

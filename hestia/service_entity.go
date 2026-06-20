@@ -3,6 +3,7 @@ package hestia
 import (
 	"errors"
 	"math/rand"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,7 +22,7 @@ type Service struct {
 	Address string `json:"address"`
 
 	// 命名服务的地址，例如：k8s的user.local.svc
-	NamedSvcAddress string `json:"named_svc_address"`
+	NamingAddress string `json:"naming_address"`
 
 	// 服务的唯一标识，例如uuid字符串
 	InstanceID string `json:"instance_id"`
@@ -43,13 +44,25 @@ type Service struct {
 // StrategyHandler service selection strategy
 type StrategyHandler func(services []*Service) *Service
 
-// RoundRobinHandler returns a random service instance.
-func RoundRobinHandler(services []*Service) *Service {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+// roundRobinCounter is used by RoundRobinHandler to select the next instance.
+var roundRobinCounter uint64
 
-	// 生成一个随机索引
-	randomIndex := r.Intn(len(services))
-	// 通过随机索引获取元素
-	service := services[randomIndex]
-	return service
+// RoundRobinHandler returns the next service instance in round-robin order.
+func RoundRobinHandler(services []*Service) *Service {
+	if len(services) == 0 {
+		return nil
+	}
+
+	idx := atomic.AddUint64(&roundRobinCounter, 1) - 1
+	return services[idx%uint64(len(services))]
+}
+
+// RandomHandler returns a random service instance.
+func RandomHandler(services []*Service) *Service {
+	if len(services) == 0 {
+		return nil
+	}
+
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	return services[r.Intn(len(services))]
 }
