@@ -323,8 +323,16 @@ env:
       fieldRef:
         fieldPath: status.podIP
 ```
+ip地址获取方式如下：
+```go
+podIP := os.Getenv("POD_IP")
+if podIP == "" {
+    // 非 K8s 环境回退
+    podIP = hestia.LocalAddr()
+}
+```
 
-注册时：
+服务启动注册时：
 
 ```go
 svc := &hestia.Service{
