@@ -279,6 +279,9 @@ s := micro.NewService(
     micro.WithShutdownTimeout(5*time.Second),
 )
 ```
+micro实战参考：
+- https://github.com/daheige/hephfx-micro-svc
+- https://github.com/daheige/hephfx/tree/main/example
 
 常用配置项见 [micro/option.go](micro/option.go)。micro更多用法查看：https://github.com/daheige/hephfx/tree/main/micro
 
