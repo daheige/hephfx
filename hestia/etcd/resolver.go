@@ -125,6 +125,10 @@ func (r *etcdResolver) updateStateWithError(services []*hestia.Service, err erro
 func (r *etcdResolver) updateState(services []*hestia.Service) {
 	addrs := make([]resolver.Address, 0, len(services))
 	for _, s := range services {
+		if s.Protocol != "" && s.Protocol != hestia.ProtocolGRPC {
+			continue
+		}
+
 		addr := resolver.Address{
 			Addr:       s.Address,
 			ServerName: s.Name,
@@ -146,6 +150,7 @@ func parseTarget(target resolver.Target) (name, version string, err error) {
 	if len(parts) == 0 || parts[0] == "" {
 		return "", "", fmt.Errorf("etcd resolver target path is empty, got: %s", target.URL.String())
 	}
+
 	if len(parts) == 1 {
 		return parts[0], "", nil
 	}

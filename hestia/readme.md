@@ -25,7 +25,7 @@
 
 - **接口化设计**：定义 `hestia.Registry` 和 `hestia.Discovery` 接口，便于扩展不同的注册中心实现。
 - **etcd 实现**：基于 `go.etcd.io/etcd/client/v3` 实现服务注册与发现，利用 etcd lease 机制实现自动过期与心跳保活。
-- **服务元数据**：`hestia.Service` 支持 `network`、`name`、`address`、`naming_address`、`version`、`metadata`、`tags` 等字段。
+- **服务元数据**：`hestia.Service` 支持 `network`、`name`、`address`、`naming_address`、`version`、`weight`、`protocol`、`healthy`、`metadata`、`tags` 等字段。
 - **版本隔离**：支持按 `version` 注册和发现服务，便于多版本共存。
 - **地址自动解析**：`hestia.Resolve` 可自动将 `:port` 或 `::` 解析为本机 IPv4 地址。
 - **负载均衡策略**：内置轮询策略 `hestia.RoundRobinHandler`，发现端支持传入自定义 `StrategyHandler`。
@@ -48,7 +48,7 @@
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     hestia.Service 实体                     │
-│  network / name / address / version / metadata / tags ...   │
+│  network / name / address / version / weight / protocol / healthy / metadata / tags ...   │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -142,20 +142,22 @@ func main() {
 
     // 构造服务信息
     svc := &hestia.Service{
-        Network: "tcp",
-        Name:    "my-service",
-        Address: ":8080", // 空 host 会自动解析为本机 IPv4
-        Version: "v1",
-        Created: time.Now().Format("2006-01-02 15:04:05"),
+        Network:  "tcp",
+        Name:     "my-service",
+        Address:  ":8080", // 空 host 会自动解析为本机 IPv4
+        Version:  "v1",
+        Weight:   100,                          // 权重，默认 100，0 表示不参与负载均衡
+        Protocol: hestia.ProtocolHTTP,          // 协议类型：GRPC / HTTP
+        Created:  time.Now().Format("2006-01-02 15:04:05"),
         Metadata: map[string]interface{}{
-            "weight": 100,
+            "region": "cn-north-1",
         },
         Tags: map[string]string{
             "env": "prod",
         },
     }
 
-    // 注册服务
+    // 注册服务，注册成功后 svc.Healthy 会被置为 true，Weight 为 0 时自动默认为 100
     if err := registry.Register(ctx, svc); err != nil {
         log.Fatalf("register service error: %v", err)
     }
@@ -207,6 +209,7 @@ func main() {
     }
 
     // 获取全部服务实例
+    // 仅返回 Healthy=true 且 Weight>0 的实例；Weight 为 0 表示该实例不参与负载均衡
     services, err := discovery.GetServices(ctx, "my-service", "v1")
     if err != nil {
         log.Fatalf("get services error: %v", err)
@@ -302,6 +305,7 @@ resolver.Register(builder)
 
 - `etcd:///order_service/v1`：服务名 `order_service`，版本 `v1`。
 - `etcd:///order_service`：服务名 `order_service`，版本为空。
+- resolver 仅使用 `Protocol` 为空或 `hestia.ProtocolGRPC` 的服务实例；HTTP 服务不会被纳入 gRPC 地址列表。
 - resolver 内部优先复用 `etcdDiscovery` 的 watch 能力感知变更；若传入的 discovery 不是 etcd 实现，则退化为 10 秒轮询。
 
 ## Kubernetes 部署建议
@@ -372,7 +376,9 @@ svc := &hestia.Service{
 7. **prefix 格式**：`WithPrefix` 传入的值前后 `/` 不影响最终效果，实现层会自动规范为 `/{prefix}`。
 8. **并发安全**：`etcdDiscovery` 内部使用读写锁保护服务列表缓存，可安全并发调用 `GetServices` 和 `Get`。
 9. **错误处理**：当目标服务没有任何可用实例时，`GetServices` 会返回 `hestia.ErrServicesNotFound`。
-10. **gRPC resolver 空列表**：服务暂时不存在时，resolver 不会直接失败，而是返回空地址列表并持续监听；待服务注册后会自动更新。
+10. **字段默认值**：注册时若 `Weight` 为 0，会自动默认设置为 100；`Healthy` 在注册成功后为 `true`，注销后为 `false`。
+11. **协议类型**：`Protocol` 支持 `hestia.ProtocolGRPC` 和 `hestia.ProtocolHTTP`，gRPC resolver 会自动过滤掉非 GRPC 的实例。
+12. **gRPC resolver 空列表**：服务暂时不存在时，resolver 不会直接失败，而是返回空地址列表并持续监听；待服务注册后会自动更新。
 
 ## 许可证
 

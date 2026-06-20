@@ -6,14 +6,14 @@ import (
 
 // Options etcd options
 type Options struct {
-	endpoints   []string      // etcd节点列表
-	dialTimeout time.Duration // 默认5s
-	leaseTTL    int64         // etcd lease时间，单位s，默认60s
-	prefix      string        // default:hestia/registry-etcd
-	username    string
-	password    string
-
-	disableWatch bool // default:true disable etcd watch
+	endpoints       []string      // etcd节点列表
+	dialTimeout     time.Duration // 默认5s
+	leaseTTL        int64         // etcd lease时间，单位s，默认60s
+	prefix          string        // default:hestia/registry-etcd
+	username        string
+	password        string
+	disableWatch    bool // default:true disable etcd watch
+	validateAddress bool // default:false no check
 }
 
 // Option etcdImpl functional option
@@ -58,5 +58,12 @@ func WithLeaseTTL(ttl int64) Option {
 func WithEnableWatched() Option {
 	return func(o *Options) {
 		o.disableWatch = false
+	}
+}
+
+// WithValidateAddress 是否验证address正确
+func WithValidateAddress(validate bool) Option {
+	return func(o *Options) {
+		o.validateAddress = validate
 	}
 }

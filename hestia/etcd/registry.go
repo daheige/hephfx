@@ -24,6 +24,7 @@ type etcdRegistry struct {
 	prefix          string
 	keepaliveCtx    context.Context
 	keepaliveCancel context.CancelFunc
+	validateAddress bool // 默认为false，不校验
 }
 
 type registerMeta struct {
@@ -49,9 +50,10 @@ func NewRegistry(endpoints []string, opts ...Option) (hestia.Registry, error) {
 	}
 
 	e := &etcdRegistry{
-		client:   client,
-		leaseTTL: opt.leaseTTL,
-		prefix:   opt.prefix,
+		client:          client,
+		leaseTTL:        opt.leaseTTL,
+		prefix:          opt.prefix,
+		validateAddress: opt.validateAddress,
 	}
 
 	e.prefix = strings.TrimPrefix(e.prefix, "/")
@@ -68,12 +70,19 @@ func (e *etcdRegistry) Register(ctx context.Context, s *hestia.Service) error {
 	}
 
 	// validate address
-	address, err := hestia.Resolve(s.Address)
-	if err != nil {
-		return fmt.Errorf("failed to resolve address:%v error:%v", s.Address, err)
+	if e.validateAddress {
+		address, err := hestia.Resolve(s.Address)
+		if err != nil {
+			return fmt.Errorf("failed to resolve address:%v error:%v", s.Address, err)
+		}
+
+		s.Address = address
 	}
 
-	s.Address = address
+	if s.Weight == 0 {
+		s.Weight = 100
+	}
+	s.Healthy = true
 	leaseID, err := grantLease(e.client, e.leaseTTL)
 	if err != nil {
 		return err
@@ -116,8 +125,8 @@ func (e *etcdRegistry) register(ctx context.Context, s *hestia.Service, leaseID 
 		return err
 	}
 
-	log.Printf("register service:%v version:%s instanceID:%v leaseID:%v success\n",
-		s.Name, s.Version, s.InstanceID, leaseID)
+	log.Printf("register prefix:%s service:%v version:%s instanceID:%v leaseID:%v success\n",
+		e.prefix, s.Name, s.Version, s.InstanceID, leaseID)
 	return nil
 }
 
@@ -187,10 +196,13 @@ func (e *etcdRegistry) deregister(ctx context.Context, s *hestia.Service) error 
 		return err
 	}
 
-	log.Printf("deregister service:%v version:%s instanceID:%v success\n", s.Name, s.Version, s.InstanceID)
+	log.Printf("deregister prefix:%s service:%v version:%s instanceID:%v success\n",
+		e.prefix, s.Name, s.Version, s.InstanceID)
 
 	if e.keepaliveCancel != nil {
 		e.keepaliveCancel()
 	}
+
+	s.Healthy = false
 	return nil
 }

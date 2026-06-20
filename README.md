@@ -38,27 +38,31 @@ A microservice framework for gRPC.
 
 ## 架构设计
 
-```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              hephfx 框架层                               │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌──────────────────┐  │
-│  │   micro    │  │   logger   │  │   monitor  │  │ settings/ctxkeys │  │
-│  │ gRPC 服务  │  │  日志输出  │  │ metrics/   │  │  配置与上下文    │  │
-│  │ + Gateway  │  │  sentry    │  │ pprof      │  │  辅助            │  │
-│  └────────────┘  └────────────┘  └────────────┘  └──────────────────┘  │
-│                                                                         │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                         hestia 服务治理层                        │   │
-│  │  Registry 接口 ──► etcdRegistry（lease 保活、注销）              │   │
-│  │  Discovery 接口 ──► etcdDiscovery（Get/GetServices/watch）       │   │
-│  │  gRPC Resolver ──► etcd:///service_name/version                  │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │   etcd / 扩展注册中心 │
-                         └─────────────────────┘
+```mermaid
+graph TB
+    subgraph hephfx["hephfx 框架层"]
+        micro["micro<br/>gRPC 服务 + Gateway"]
+        logger["logger<br/>日志输出 / Sentry"]
+        monitor["monitor<br/>metrics / pprof"]
+        settings["settings / ctxkeys<br/>配置与上下文辅助"]
+
+        subgraph hestia["hestia 服务治理层"]
+            registry["Registry 接口"]
+            discovery["Discovery 接口"]
+            resolver["gRPC Resolver"]
+            etcdRegistry["etcdRegistry<br/>lease 保活 / 注销"]
+            etcdDiscovery["etcdDiscovery<br/>Get / GetServices / watch"]
+            etcdResolver["etcd:///service_name/version"]
+        end
+    end
+
+    registry --> etcdRegistry
+    discovery --> etcdDiscovery
+    resolver --> etcdResolver
+
+    etcdRegistry --> etcd["etcd / 扩展注册中心"]
+    etcdDiscovery --> etcd
+    etcdResolver --> etcd
 ```
 
 ### 运行模式

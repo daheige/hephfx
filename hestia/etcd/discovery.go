@@ -181,8 +181,9 @@ func (e *etcdDiscovery) getServicesByName(ctx context.Context, name string, vers
 			log.Printf("unmarshal service failed,error:%v", err)
 			continue
 		}
-
-		services = append(services, serviceEntry)
+		if serviceEntry.Healthy {
+			services = append(services, serviceEntry)
+		}
 	}
 
 	return services, nil

@@ -10,6 +10,16 @@ import (
 // ErrServicesNotFound 服务列表为空
 var ErrServicesNotFound = errors.New("services not found")
 
+// ProtocolType 下游微服务协议类型。
+type ProtocolType string
+
+const (
+	// ProtocolGRPC 下游是 gRPC 服务。
+	ProtocolGRPC ProtocolType = "GRPC"
+	// ProtocolHTTP 下游是 HTTP/REST 服务。
+	ProtocolHTTP ProtocolType = "HTTP"
+)
+
 // Service 服务基本信息
 type Service struct {
 	// network name of the network (for example, "tcp", "udp")
@@ -29,6 +39,15 @@ type Service struct {
 
 	// 当前版本
 	Version string `json:"version"`
+
+	// 权重，用于负载均衡（默认 100）
+	Weight uint32 `json:"weight"`
+
+	// 协议类型：GRPC / HTTP或者其他类型
+	Protocol ProtocolType `json:"protocol"`
+
+	// 健康状态
+	Healthy bool `json:"healthy"`
 
 	// 创建时间
 	Created string `json:"created"`
