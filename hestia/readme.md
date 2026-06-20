@@ -35,29 +35,26 @@
 
 ## 架构设计
 
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                        hestia 抽象层                         │
-│  ┌──────────────┐         ┌─────────────────────────────┐  │
-│  │   Registry   │         │          Discovery          │  │
-│  │  Register()  │         │  GetServices() / Get()      │  │
-│  │ Deregister() │         │         String()            │  │
-│  └──────────────┘         └─────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     hestia.Service 实体                     │
-│  network / name / address / version / weight / protocol / healthy / metadata / tags ...   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     hestia/etcd 实现层                       │
-│  etcdRegistry (Register/Deregister/keepalive)               │
-│  etcdDiscovery (GetServices/Get/watch)                      │
-│  etcdResolverBuilder / etcdResolver (gRPC resolver)         │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Abstract["hestia 抽象层"]
+        Registry["Registry 接口\nRegister() / Deregister() / String()"]
+        Discovery["Discovery 接口\nGetServices() / Get() / String()"]
+    end
+
+    Service["hestia.Service 实体\nnetwork / name / address / version / weight\nprotocol / healthy / metadata / tags ..."]
+
+    subgraph Impl["hestia/etcd 实现层"]
+        etcdRegistry["etcdRegistry\nRegister / Deregister / keepalive"]
+        etcdDiscovery["etcdDiscovery\nGetServices / Get / watch"]
+        etcdResolver["etcdResolverBuilder / etcdResolver\ngRPC resolver"]
+    end
+
+    Registry --> Service
+    Discovery --> Service
+    Service --> etcdRegistry
+    Service --> etcdDiscovery
+    Service --> etcdResolver
 ```
 
 ### 存储结构
