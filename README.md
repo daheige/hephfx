@@ -280,7 +280,7 @@ s := micro.NewService(
 )
 ```
 
-常用配置项见 [micro/option.go](micro/option.go)。
+常用配置项见 [micro/option.go](micro/option.go)。micro更多用法查看：https://github.com/daheige/hephfx/tree/main/micro
 
 ### hestia
 
