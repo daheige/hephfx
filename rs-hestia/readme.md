@@ -13,6 +13,9 @@
 - [Context 设计和用法](#context-设计和用法)
 - [虚拟机或本机使用方式](#虚拟机或本机使用方式)
 - [Kubernetes 使用方式](#kubernetes-使用方式)
+- [consul实现服务注册和发现](#consul实现服务注册和发现)
+  - [快速使用](#快速使用)
+  - [grpc resolver](#grpc-resolver)
 - [单元测试](#单元测试)
 - [注意事项](#注意事项)
 - [许可证](#许可证)
@@ -481,6 +484,109 @@ async fn main() -> rs_hestia::Result<()> {
 - resolver 仅使用 `protocol` 为 `ProtocolType::Grpc` 的服务实例；`Unspecified`、`Http`、`Other` 等均不会被纳入 gRPC 地址列表。
 - resolver 内部优先复用 `EtcdDiscovery` 的 watch 能力感知变更；若传入的 discovery 不是 etcd 实现，则退化为 10 秒轮询。
 
+## consul实现服务注册和发现
+
+除 etcd 外，`rs-hestia` 还提供基于 HashiCorp Consul 的服务注册、发现与 tonic gRPC resolver。接口与 etcd 实现完全一致，仅模块路径与 target scheme 不同。
+
+### 快速使用
+
+本地先用 Docker 启动一个开发模式 Consul 节点：
+
+```bash
+docker run -d --name consul \
+  -p 8500:8500 \
+  hashicorp/consul consul agent -dev -ui -client=0.0.0.0
+```
+
+服务注册：
+
+```rust
+use rs_hestia::consul::{Options, new_registry};
+use rs_hestia::{Context, Service, ProtocolType};
+
+#[tokio::main]
+async fn main() -> rs_hestia::Result<()> {
+    let ctx = Context::new();
+
+    let registry = new_registry(
+        Options::new(vec!["http://127.0.0.1:8500".to_string()]),
+    ).await?;
+
+    let mut svc = Service {
+        network: "tcp".to_string(),
+        name: "order-service".to_string(),
+        address: ":8080".to_string(),
+        version: "v1".to_string(),
+        weight: 100,
+        protocol: ProtocolType::Grpc,
+        ..Default::default()
+    };
+
+    registry.register(&ctx, &mut svc).await?;
+    println!("registered instance_id: {}", svc.instance_id);
+
+    // 应用退出时注销
+    registry.deregister(&ctx, &mut svc).await?;
+    Ok(())
+}
+```
+
+服务发现：
+
+```rust
+use rs_hestia::consul::{Options, new_discovery};
+use rs_hestia::Context;
+
+#[tokio::main]
+async fn main() -> rs_hestia::Result<()> {
+    let ctx = Context::new();
+
+    let discovery = new_discovery(
+        Options::new(vec!["http://127.0.0.1:8500".to_string()])
+            .with_enable_watch(), // 可选：开启 blocking-query watch 实时刷新
+    ).await?;
+
+    let services = discovery.get_services(&ctx, "order-service", "v1").await?;
+    println!("services: {:?}", services);
+
+    let svc = discovery.get(&ctx, "order-service", "v1", None).await?;
+    println!("selected: {}://{}", svc.network, svc.address);
+
+    Ok(())
+}
+```
+
+更多 Consul 部署方式、Options 配置与注意事项请参考 [src/consul/readme.md](src/consul/readme.md)。
+
+### grpc resolver
+
+```rust
+use rs_hestia::consul::{Options, new_discovery, build_channel};
+use rs_hestia::Context;
+
+#[tokio::main]
+async fn main() -> rs_hestia::Result<()> {
+    let _ctx = Context::new();
+
+    let discovery = new_discovery(
+        Options::new(vec!["http://127.0.0.1:8500".to_string()]),
+    ).await?;
+
+    // target 格式：consul:///service_name/version
+    let channel = build_channel("consul:///order-service/v1", discovery).await?;
+
+    // 用 channel 创建具体的 tonic gRPC client
+    // let client = order::OrderServiceClient::new(channel);
+
+    Ok(())
+}
+```
+
+- `consul:///order_service/v1`：服务名 `order_service`，版本 `v1`。
+- `consul:///order_service`：服务名 `order_service`，版本为空。
+- resolver 仅使用 `protocol` 为 `Grpc` 的实例，其他协议会被过滤。
+- 若 discovery 是 `ConsulDiscovery`，resolver 会复用 blocking-query watch 感知变更；否则退化为 10 秒轮询。
+
 ## Kubernetes 使用方式
 
 在 K8s 中注册服务时，最可靠的方式是通过 **Downward API 注入 Pod IP**，而不是依赖 `resolve(":port")` 自动推导本机 IP。
@@ -541,7 +647,7 @@ registry.register(&ctx, &mut svc).await?;
 
 ## 单元测试
 
-项目包含两类测试：不依赖外部服务的单元测试，以及需要本地 etcd 的集成测试。
+项目包含两类测试：不依赖外部服务的单元测试，以及需要本地 etcd 或 Consul 的集成测试。
 
 ### 运行单元测试
 
@@ -549,7 +655,7 @@ registry.register(&ctx, &mut svc).await?;
 cargo test --lib
 ```
 
-### 运行集成测试
+### 运行 etcd 集成测试
 
 `tests/etcd_integration.rs` 中的测试默认加了 `#[ignore]`，因为它们需要本地 etcd 节点。先用 Docker 启动 etcd：
 
@@ -567,6 +673,22 @@ docker run -d --name etcd \
 
 ```bash
 cargo test --test etcd_integration -- --ignored
+```
+
+### 运行 consul 集成测试
+
+`tests/consul_integration.rs` 中的测试默认加了 `#[ignore]`，因为它们需要本地 Consul 节点。先用 Docker 启动 Consul：
+
+```bash
+docker run -d --name consul \
+  -p 8500:8500 \
+  hashicorp/consul consul agent -dev -ui -client=0.0.0.0
+```
+
+再执行被忽略的测试：
+
+```bash
+cargo test --test consul_integration -- --ignored
 ```
 
 ### 查看测试输出
@@ -591,8 +713,10 @@ RUST_LOG=info cargo test --test etcd_integration test_registry -- --ignored --no
 
 - `src/service.rs`：测试 `Service` JSON 序列化/反序列化、`ProtocolType` 大小写不敏感和任意协议字符串、`round_robin` / `random` 负载策略。
 - `src/netaddr.rs`：测试地址解析、本地地址获取、IPv6 通配符处理。
-- `src/etcd/resolver.rs`：测试 target 字符串解析。
+- `src/etcd/resolver.rs`：测试 etcd target 字符串解析。
+- `src/consul/resolver.rs`：测试 consul target 字符串解析。
 - `tests/etcd_integration.rs`：测试 etcd 注册、发现、watch、resolver 构建等端到端流程。
+- `tests/consul_integration.rs`：测试 Consul 注册、发现、watch、resolver 构建等端到端流程。
 
 ## 注意事项
 

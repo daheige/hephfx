@@ -11,6 +11,8 @@ pub mod netaddr;
 pub mod registry;
 pub mod service;
 
+// consul and etcd registry module
+pub mod consul;
 pub mod etcd;
 
 pub use discovery::Discovery;

@@ -31,6 +31,7 @@ A microservice framework for gRPC.
   - [gRPC 客户端使用](#grpc-客户端使用)
   - [Options 常用配置](#options-常用配置)
   - [推荐项目结构](#推荐项目结构)
+  - [consul实现服务发现和注册以及grpc resolver](#consul实现服务发现和注册以及grpc-resolver)
 - [许可证](#许可证)
 
 ## 核心特性
@@ -91,7 +92,7 @@ graph TB
 ├── grpc-server.png               # gRPC 服务端运行截图
 ├── grpc-http-proxy.png           # HTTP Gateway 运行截图
 ├── example                       # gRPC 实战 demo
-│   ├── bin                       # 编译产物目录
+│   ├── bin                       # 工具脚本（protoc、校验生成等）
 │   ├── clients                   # 多语言客户端示例
 │   │   ├── go                    # Go 客户端示例
 │   │   └── nodejs                # Node.js 客户端示例
@@ -103,16 +104,25 @@ graph TB
 │   ├── pb                        # protobuf 生成的 Go 代码
 │   ├── protos                    # .proto 源文件
 │   │   └── google                # google api proto 依赖
+│   ├── readme.md                 # example 说明
 │   └── tools                     # 工具脚本
 │       └── validator_gen         # 校验码生成工具
 ├── ctxkeys                       # 上下文键名常量（request_id、client_ip 等）
 ├── gutils                        # 通用工具函数（UUID、MD5、随机数、堆栈捕获等）
-├── hestia                        # 服务注册与发现，基于 etcd 实现
+├── hestia                        # 服务注册与发现抽象与 etcd 实现
 │   ├── etcd                      # etcd 注册中心、发现、resolver 实现
+│   │   ├── etcd.go               # etcd 客户端封装
+│   │   ├── option.go             # etcd 配置选项
+│   │   ├── registry.go           # etcd Registry 实现
+│   │   ├── discovery.go          # etcd Discovery 实现
+│   │   ├── resolver.go           # etcd gRPC Resolver 实现
+│   │   ├── readme.md             # etcd 使用说明
+│   │   └── *_test.go             # 单元/集成测试
 │   ├── discovery.go              # Discovery 接口
 │   ├── registry.go               # Registry 接口
 │   ├── service_entity.go         # Service 实体定义
-│   └── netaddr.go                # 本机地址解析
+│   ├── netaddr.go                # 本机地址解析
+│   └── *_test.go                 # 单元测试
 ├── rs-hestia                     # hestia 的 Rust 实现版本
 │   ├── Cargo.toml / Cargo.lock   # Rust 包配置与依赖锁定
 │   ├── readme.md                 # rs-hestia 使用说明
@@ -123,8 +133,11 @@ graph TB
 │   │   ├── service.rs            # Service 实体与负载策略
 │   │   ├── netaddr.rs            # 地址解析
 │   │   ├── error.rs              # 错误定义
-│   │   └── etcd                  # etcd 注册、发现、resolver 实现
+│   │   ├── etcd                  # etcd 注册、发现、resolver 实现
+│   │   └── consul                # consul 注册、发现、resolver 实现
 │   └── tests                     # 集成测试
+│       ├── etcd_integration.rs   # etcd 集成测试
+│       └── consul_integration.rs # consul 集成测试
 ├── logger                        # 基于 zap 的日志组件
 │   └── example                   # logger 使用示例
 │       └── sentry                # Sentry 上报示例
@@ -135,6 +148,7 @@ graph TB
 │   ├── conn.go                   # gRPC 连接相关
 │   ├── logger.go                 # 日志接口适配
 │   ├── signals.go                # 信号处理
+│   ├── readme.md                 # micro 使用说明
 │   └── md_test.go / gutils.go    # 辅助与测试
 ├── monitor                       # 服务监控指标与 Go pprof
 │   ├── gpprof                    # pprof HTTP 服务封装
@@ -145,6 +159,7 @@ graph TB
     ├── config.go                 # Config 接口
     ├── viper_config.go           # viper 实现
     ├── option.go                 # 配置选项
+    ├── readme.md                 # settings 使用说明
     └── settings_test.go          # 测试
 ```
 
@@ -613,6 +628,114 @@ myapp/
 ```
 
 服务端入口负责 `new_registry` + `register` + `keepalive`，客户端入口负责 `new_discovery` + `build_channel` 或 `get`，二者共享同一个 etcd 集群即可实现跨语言服务注册与发现。
+
+### consul实现服务发现和注册以及grpc resolver
+
+除 etcd 外，`rs-hestia` 还提供基于 HashiCorp Consul 的实现，接口与 etcd 完全一致。
+
+#### 依赖引入
+
+Consul 实现通过 `reqwest` 调用 Consul HTTP API，已包含在 `rs-hestia` 依赖中，无需额外引入。
+
+#### 启动 Consul
+
+```bash
+docker run -d --name consul \
+  -p 8500:8500 \
+  hashicorp/consul consul agent -dev -ui -client=0.0.0.0
+```
+
+#### 服务端注册
+
+```rust
+use rs_hestia::consul::{Options, new_registry};
+use rs_hestia::{Context, Service, ProtocolType};
+
+#[tokio::main]
+async fn main() -> rs_hestia::Result<()> {
+    let ctx = Context::new();
+
+    let registry = new_registry(
+        Options::new(vec!["http://127.0.0.1:8500".to_string()])
+            .with_health_check_ttl(10),
+    ).await?;
+
+    let mut svc = Service {
+        network: "tcp".to_string(),
+        name: "order-service".to_string(),
+        address: ":8080".to_string(),
+        version: "v1".to_string(),
+        weight: 100,
+        protocol: ProtocolType::Grpc,
+        ..Default::default()
+    };
+
+    registry.register(&ctx, &mut svc).await?;
+    println!("registered instance_id: {}", svc.instance_id);
+
+    tokio::signal::ctrl_c().await.ok();
+
+    registry.deregister(&ctx, &mut svc).await?;
+    Ok(())
+}
+```
+
+#### 客户端发现
+
+```rust
+use rs_hestia::consul::{Options, new_discovery};
+use rs_hestia::Context;
+
+#[tokio::main]
+async fn main() -> rs_hestia::Result<()> {
+    let ctx = Context::new();
+
+    let discovery = new_discovery(
+        Options::new(vec!["http://127.0.0.1:8500".to_string()])
+            .with_enable_watch(),
+    ).await?;
+
+    let services = discovery.get_services(&ctx, "order-service", "v1").await?;
+    println!("services: {:?}", services);
+
+    let svc = discovery.get(&ctx, "order-service", "v1", None).await?;
+    println!("selected: {}://{}", svc.network, svc.address);
+
+    Ok(())
+}
+```
+
+#### gRPC 客户端使用
+
+```rust
+use rs_hestia::consul::{Options, new_discovery, build_channel};
+use rs_hestia::Context;
+
+#[tokio::main]
+async fn main() -> rs_hestia::Result<()> {
+    let _ctx = Context::new();
+
+    let discovery = new_discovery(
+        Options::new(vec!["http://127.0.0.1:8500".to_string()]),
+    ).await?;
+
+    let channel = build_channel("consul:///order-service/v1", discovery).await?;
+    // let client = order::OrderServiceClient::new(channel);
+
+    Ok(())
+}
+```
+
+#### target 格式说明
+
+- `consul:///order_service/v1`：服务名 `order_service`，版本 `v1`。
+- `consul:///order_service`：服务名 `order_service`，版本为空。
+- resolver 仅选取 `protocol` 为 `Grpc` 的实例，其他协议会被过滤。
+- 若传入的 discovery 是 `ConsulDiscovery`，resolver 会复用其 blocking-query watch 能力；否则退化为 10 秒轮询。
+
+#### 更多文档
+
+Consul 模块的详细说明（核心特性、架构设计、部署方式、单元测试、注意事项、许可证等）请参考 [rs-hestia/src/consul/readme.md](rs-hestia/src/consul/readme.md)。
 
 ## 许可证
 

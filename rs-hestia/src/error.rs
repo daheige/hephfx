@@ -21,6 +21,10 @@ pub enum HestiaError {
     #[error("etcd error: {0}")]
     Etcd(#[from] etcd_client::Error),
 
+    /// A Consul HTTP client error.
+    #[error("consul error: {0}")]
+    Consul(#[from] reqwest::Error),
+
     /// A JSON serialization/deserialization error.
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
