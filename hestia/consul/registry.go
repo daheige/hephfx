@@ -27,17 +27,14 @@ type consulRegistry struct {
 	prefix          string
 }
 
-const versionTagPrefix = "hestia-version="
-const instanceIDMeta = "hestia-instance-id"
-
 // NewRegistry create a consul Registry instance
 func NewRegistry(endpoints []string, opts ...Option) (hestia.Registry, error) {
 	opt := &Options{
 		endpoints:                      endpoints,
 		dialTimeout:                    5 * time.Second,
-		ttl:                            "30s",
-		deregisterCriticalServiceAfter: "90s",
-		prefix:                         "hestia",
+		ttl:                            "10s",
+		deregisterCriticalServiceAfter: "1m",
+		prefix:                         "/hestia/registry-consul",
 	}
 
 	for _, o := range opts {
@@ -84,10 +81,11 @@ func (r *consulRegistry) Register(ctx context.Context, s *hestia.Service) error 
 		return fmt.Errorf("failed to split address %s: %v", s.Address, err)
 	}
 
-	tags := buildTags(s)
+	tags := buildTags(s, r.prefix)
 	meta := buildMeta(s)
+	checkID := buildCheckID(s.InstanceID)
 
-	// 1. register service (without embedded check)
+	// Single call with embedded check — matches Rust convention
 	serviceReg := &consulapi.AgentServiceRegistration{
 		ID:      s.InstanceID,
 		Name:    s.Name,
@@ -95,39 +93,19 @@ func (r *consulRegistry) Register(ctx context.Context, s *hestia.Service) error 
 		Port:    port,
 		Tags:    tags,
 		Meta:    meta,
+		Check: &consulapi.AgentServiceCheck{
+			CheckID:                        checkID,
+			Name:                           fmt.Sprintf("%s TTL check", s.Name),
+			TTL:                            r.ttl,
+			DeregisterCriticalServiceAfter: r.deregisterAfter,
+		},
 	}
 
 	if err := r.client.Agent().ServiceRegister(serviceReg); err != nil {
 		return fmt.Errorf("consul register service %s error: %v", s.Name, err)
 	}
 
-	// 2. register TTL check separately, explicitly bound to the service
-	checkID := buildCheckID(s.InstanceID)
-	checkReg := &consulapi.AgentCheckRegistration{
-		ID:        checkID,
-		Name:      fmt.Sprintf("TTL check for %s", s.Name),
-		ServiceID: s.InstanceID,
-		AgentServiceCheck: consulapi.AgentServiceCheck{
-			TTL:                            r.ttl,
-			DeregisterCriticalServiceAfter: r.deregisterAfter,
-		},
-	}
-
-	if err := r.client.Agent().CheckRegister(checkReg); err != nil {
-		// rollback: deregister the service we just registered
-		_ = r.client.Agent().ServiceDeregister(s.InstanceID)
-		return fmt.Errorf("consul register check for %s error: %v", s.Name, err)
-	}
-
-	// 3. initial TTL pass to mark check as healthy
-	if err := r.client.Agent().UpdateTTL(checkID, "registered", "passing"); err != nil {
-		// rollback
-		_ = r.client.Agent().CheckDeregister(checkID)
-		_ = r.client.Agent().ServiceDeregister(s.InstanceID)
-		return fmt.Errorf("consul initial TTL pass for %s error: %v", s.Name, err)
-	}
-
-	// 4. start keepalive goroutine
+	// Start keepalive goroutine
 	r.stopKeepalive()
 	r.keepaliveCtx, r.keepaliveCancel = context.WithCancel(context.Background())
 	go r.keepalive(r.keepaliveCtx, checkID)
@@ -139,8 +117,8 @@ func (r *consulRegistry) Register(ctx context.Context, s *hestia.Service) error 
 
 // Deregister the service goes offline when the application exit
 func (r *consulRegistry) Deregister(ctx context.Context, s *hestia.Service) error {
-	if s.InstanceID == "" {
-		return fmt.Errorf("missing instance_id in Deregister")
+	if s.Name == "" {
+		return fmt.Errorf("missing service name in Deregister")
 	}
 
 	r.stopKeepalive()
@@ -180,8 +158,8 @@ func (r *consulRegistry) keepalive(ctx context.Context, checkID string) {
 		log.Printf("consul keepalive parse ttl %s error: %v", r.ttl, err)
 		return
 	}
-	// TTL heartbeat interval: TTL/3 to be safe
-	interval := dur / 3
+	// TTL heartbeat interval: TTL/2 to match Rust convention
+	interval := dur / 2
 	if interval < time.Second {
 		interval = time.Second
 	}
@@ -206,32 +184,23 @@ func (r *consulRegistry) keepalive(ctx context.Context, checkID string) {
 }
 
 func buildMeta(s *hestia.Service) map[string]string {
-	meta := map[string]string{
-		"network":        s.Network,
-		"version":        s.Version,
-		"weight":         strconv.FormatUint(uint64(s.Weight), 10),
-		"protocol":       string(s.Protocol),
-		"naming_address": s.NamingAddress,
-		"created":        s.Created,
-		instanceIDMeta:   s.InstanceID,
-	}
-	for k, v := range s.Tags {
-		meta["tag_"+k] = v
-	}
+	meta := make(map[string]string, len(s.Metadata))
 	for k, v := range s.Metadata {
-		meta["meta_"+k] = fmt.Sprintf("%v", v)
+		meta[k] = fmt.Sprintf("%v", v)
 	}
 	return meta
 }
 
-func buildTags(s *hestia.Service) []string {
+func buildTags(s *hestia.Service, prefix string) []string {
 	var tags []string
+	if prefix != "" {
+		tags = append(tags, "prefix:"+normalizePrefix(prefix))
+	}
 	if s.Version != "" {
-		tags = append(tags, versionTagPrefix+s.Version)
+		tags = append(tags, "version:"+s.Version)
 	}
-	for k, v := range s.Tags {
-		tags = append(tags, k+"="+v)
-	}
+	tags = append(tags, "protocol:"+string(s.Protocol))
+	tags = append(tags, "instance_id:"+s.InstanceID)
 	return tags
 }
 

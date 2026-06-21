@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +27,7 @@ func NewDiscovery(endpoints []string, opts ...Option) (hestia.Discovery, error) 
 	opt := &Options{
 		endpoints:    endpoints,
 		dialTimeout:  5 * time.Second,
-		ttl:          "30s",
+		ttl:          "10s",
 		disableWatch: true,
 	}
 
@@ -125,7 +124,7 @@ func (d *consulDiscovery) watchWithCallback(ctx context.Context, name string, ve
 	callback func([]*hestia.Service, error)) {
 	tag := buildVersionFilter(version)
 	q := &consulapi.QueryOptions{
-		WaitTime: 5 * time.Minute,
+		WaitTime: 30 * time.Second,
 	}
 
 	for {
@@ -138,13 +137,11 @@ func (d *consulDiscovery) watchWithCallback(ctx context.Context, name string, ve
 		entries, meta, err := d.client.Health().Service(name, tag, true, q)
 		if err != nil {
 			callback(nil, fmt.Errorf("consul health service %s error: %v", name, err))
-			// On error, wait before retry to avoid hammering the server
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(5 * time.Second):
+			case <-time.After(3 * time.Second):
 			}
-			q.WaitIndex = 0
 			continue
 		}
 
@@ -167,12 +164,22 @@ func (d *consulDiscovery) getServicesByName(ctx context.Context,
 }
 
 // buildVersionFilter returns the version tag used for Consul health filtering.
-// Returns empty string if version is empty (no version filter).
 func buildVersionFilter(version string) string {
 	if version == "" {
 		return ""
 	}
-	return versionTagPrefix + version
+	return "version:" + version
+}
+
+// tagValue finds the first tag starting with the given prefix and returns
+// the remainder after the prefix. Returns empty string if not found.
+func tagValue(tags []string, prefix string) string {
+	for _, t := range tags {
+		if strings.HasPrefix(t, prefix) {
+			return t[len(prefix):]
+		}
+	}
+	return ""
 }
 
 // mapToServices maps Consul ServiceEntry list to hestia.Service list
@@ -190,49 +197,39 @@ func mapToServices(entries []*consulapi.ServiceEntry) []*hestia.Service {
 // mapToService maps a single Consul ServiceEntry to hestia.Service
 func mapToService(entry *consulapi.ServiceEntry) *hestia.Service {
 	svc := entry.Service
-	meta := svc.Meta
 
-	weight, _ := strconv.ParseUint(meta["weight"], 10, 32)
-	if weight == 0 {
-		weight = 100
+	// Read version, protocol, instance_id from tags (Rust convention)
+	version := tagValue(svc.Tags, "version:")
+	protocolStr := tagValue(svc.Tags, "protocol:")
+	instanceID := tagValue(svc.Tags, "instance_id:")
+	if instanceID == "" {
+		instanceID = svc.ID
 	}
 
-	// Extract version from meta or from tags
-	version := meta["version"]
-
-	tags := make(map[string]string)
-	metadata := make(map[string]interface{})
-	for k, v := range meta {
-		if strings.HasPrefix(k, "tag_") {
-			tagKey := strings.TrimPrefix(k, "tag_")
-			tags[tagKey] = v
-		} else if strings.HasPrefix(k, "meta_") {
-			metaKey := strings.TrimPrefix(k, "meta_")
-			metadata[metaKey] = v
-		}
+	// Node address fallback when service address is empty
+	host := svc.Address
+	if host == "" {
+		host = entry.Node.Address
 	}
 
-	s := &hestia.Service{
-		Network:       getMeta(meta, "network", "tcp"),
+	// Build metadata from svc.Meta directly (no prefix processing)
+	metadata := make(map[string]interface{}, len(svc.Meta))
+	for k, v := range svc.Meta {
+		metadata[k] = v
+	}
+
+	return &hestia.Service{
+		Network:       "tcp",
 		Name:          svc.Service,
-		Address:       fmt.Sprintf("%s:%d", svc.Address, svc.Port),
-		NamingAddress: meta["naming_address"],
-		InstanceID:    svc.ID,
+		Address:       fmt.Sprintf("%s:%d", host, svc.Port),
+		NamingAddress: "",
+		InstanceID:    instanceID,
 		Version:       version,
-		Weight:        uint32(weight),
-		Protocol:      hestia.ProtocolType(meta["protocol"]),
+		Weight:        100,
+		Protocol:      hestia.ProtocolType(protocolStr),
 		Healthy:       true,
-		Created:       meta["created"],
+		Created:       "",
 		Metadata:      metadata,
-		Tags:          tags,
+		Tags:          map[string]string{},
 	}
-
-	return s
-}
-
-func getMeta(meta map[string]string, key, defaultVal string) string {
-	if v, ok := meta[key]; ok {
-		return v
-	}
-	return defaultVal
 }

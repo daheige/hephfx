@@ -17,11 +17,10 @@
 ## 核心特性
 
 - **接口化设计**：实现 `hestia.Registry` 和 `hestia.Discovery` 接口，与 etcd 实现无缝切换。
-- **TTL 健康检查**：基于 Consul Agent 的 TTL check 机制，服务注册与 check 分离注册；注册后以 TTL/3 间隔定期心跳保活，服务退出后停止心跳，TTL 到期自动标记 critical 并最终注销。
-- **故障回滚**：注册过程中若 check 注册或初始 TTL pass 失败，自动回滚已注册的 service 和 check，避免残留脏数据。
-- **Blocking Query Watch**：通过 Consul 原生 long polling（blocking query）实现服务列表变更的实时监听，相比 etcd watch 更节省连接资源。
-- **版本隔离**：版本号以 `hestia-version=v1` 格式存储为 Consul tag，发现时通过 Health API 的 tag 参数精准过滤。
-- **元数据映射**：`hestia.Service` 的非基础字段存储在 Consul `Meta` 中，以 `tag_` 和 `meta_` 前缀区分用户自定义 tags 与 metadata。
+- **TTL 健康检查**：基于 Consul Agent 的 TTL check 机制，注册时通过嵌入式 Check 一步完成服务注册与健康检查绑定；注册后以 TTL/2 间隔定期心跳保活，服务退出后停止心跳，TTL 到期自动标记 critical 并最终注销。
+- **Blocking Query Watch**：通过 Consul 原生 long polling（blocking query）实现服务列表变更的实时监听（默认 `WaitTime=30s`），相比 etcd watch 更节省连接资源。
+- **版本隔离**：版本号以 `version:v1` 格式存储为 Consul tag，发现时通过 Health API 的 `tag=version:v1` 参数精准过滤。
+- **元数据映射**：关键字段（`prefix`、`version`、`protocol`、`instance_id`）存储在 Consul `Tags` 中（可索引可过滤）；用户自定义 `metadata` 存储在 Consul `Meta` 中（键值对）。
 - **地址自动解析**：`hestia.Resolve` 可自动将 `:port` 或 `::` 解析为本机 IPv4 地址。
 - **负载均衡策略**：内置轮询策略 `hestia.RoundRobinHandler`，发现端支持传入自定义 `StrategyHandler`。
 - **ACL 支持**：通过 `WithToken` 配置 Consul ACL token。
@@ -39,8 +38,8 @@ flowchart TB
     Service["hestia.Service 实体<br/>network / name / address / version / weight<br/>protocol / healthy / metadata / tags ..."]
 
     subgraph ConsulImpl["hestia/consul 实现层"]
-        consulRegistry["consulRegistry<br/>Register → ServiceRegister + CheckRegister + UpdateTTL<br/>Deregister → CheckDeregister + ServiceDeregister<br/>keepalive → TTL/3 心跳"]
-        consulDiscovery["consulDiscovery<br/>GetServices → Health.Service<br/>Get → RoundRobinHandler<br/>watch → Blocking Query"]
+        consulRegistry["consulRegistry<br/>Register → ServiceRegister (embedded Check)<br/>Deregister → CheckDeregister + ServiceDeregister<br/>keepalive → TTL/2 心跳"]
+        consulDiscovery["consulDiscovery<br/>GetServices → Health.Service<br/>Get → RoundRobinHandler<br/>watch → Blocking Query (30s)"]
         consulResolver["consulResolverBuilder / consulResolver<br/>gRPC resolver<br/>scheme: consul"]
     end
 
@@ -65,17 +64,14 @@ flowchart TB
 
 | hestia.Service 字段 | Consul 对应字段 | 说明 |
 |---|---|---|
-| `InstanceID` | `AgentServiceRegistration.ID` 和 `Meta["hestia-instance-id"]` | 服务唯一标识 |
+| `InstanceID` | `Tags` 中 `instance_id:xxx` + `AgentServiceRegistration.ID` | 服务唯一标识 |
 | `Name` | `AgentServiceRegistration.Name` | Consul 服务名 |
 | `Address` (host) | `AgentServiceRegistration.Address` | 主机地址 |
 | `Address` (port) | `AgentServiceRegistration.Port` | 端口号 |
-| `Version` | `Tags` 中 `hestia-version=v1` 和 `Meta["version"]` | 版本号，双重存储便于过滤与回显 |
-| `Weight` | `Meta["weight"]` | 权重，默认 100 |
-| `Protocol` | `Meta["protocol"]` | 协议类型（GRPC / HTTP） |
-| `Network` | `Meta["network"]` | 网络类型，默认 tcp |
-| `NamingAddress` | `Meta["naming_address"]` | K8s 命名服务地址 |
-| `Tags` | `Meta["tag_xxx"]` | 用户自定义 tags |
-| `Metadata` | `Meta["meta_xxx"]` | 用户自定义 metadata |
+| `Version` | `Tags` 中 `version:v1` | 版本号，Consul tag 索引，支持 Health API 过滤 |
+| `Protocol` | `Tags` 中 `protocol:GRPC` | 协议类型（GRPC / HTTP 等） |
+| `Prefix` | `Tags` 中 `prefix:xxx` | 注册前缀标识 |
+| `Metadata` | `Meta`（直接映射） | 用户自定义 metadata 键值对 |
 
 ### 注册流程
 
@@ -89,18 +85,9 @@ flowchart TD
     ValidateAddr -- 否 --> SetDefaults["设置 Weight=100, Healthy=true"]
     Resolve --> SetDefaults
 
-    SetDefaults --> RegSvc["Agent.ServiceRegister<br/>注册服务（不含 check）"]
+    SetDefaults --> RegSvc["Agent.ServiceRegister<br/>注册服务（内嵌 Check）"]
     RegSvc -- 失败 --> ErrSvc["返回注册错误"]
-    RegSvc -- 成功 --> RegCheck["Agent.CheckRegister<br/>注册 TTL check，绑定 serviceID"]
-
-    RegCheck -- 失败 --> Rollback1["回滚：ServiceDeregister"]
-    Rollback1 --> ErrCheck["返回 check 注册错误"]
-
-    RegCheck -- 成功 --> InitTTL["Agent.UpdateTTL<br/>初始标记 passing"]
-    InitTTL -- 失败 --> Rollback2["回滚：CheckDeregister + ServiceDeregister"]
-    Rollback2 --> ErrTTL["返回 TTL 初始化错误"]
-
-    InitTTL -- 成功 --> StartKeepalive["启动 keepalive goroutine<br/>间隔 = TTL/3"]
+    RegSvc -- 成功 --> StartKeepalive["启动 keepalive goroutine<br/>间隔 = TTL/2"]
     StartKeepalive --> Done["注册成功"]
 ```
 
@@ -109,7 +96,7 @@ flowchart TD
 ```mermaid
 flowchart LR
     subgraph Healthy["健康运行"]
-        Keepalive["keepalive goroutine<br/>每 TTL/3 调用 UpdateTTL('passing')"]
+        Keepalive["keepalive goroutine<br/>每 TTL/2 调用 UpdateTTL('passing')"]
     end
 
     subgraph Exit["服务退出"]
@@ -255,9 +242,9 @@ func main() {
 registry, err := consul.NewRegistry(
     []string{"127.0.0.1:8500"},
     consul.WithDialTimeout(10*time.Second),        // 连接超时
-    consul.WithTTL("30s"),                          // TTL 健康检查间隔
-    consul.WithDeregisterCriticalServiceAfter("90s"), // critical 后自动注销时间
-    consul.WithPrefix("hestia"),                    // 服务名前缀
+    consul.WithTTL("10s"),                          // TTL 健康检查间隔
+    consul.WithDeregisterCriticalServiceAfter("1m"), // critical 后自动注销时间
+    consul.WithPrefix("/hestia/registry-consul"),                    // key 前缀
     consul.WithToken("your-acl-token"),             // ACL token
     consul.WithValidateAddress(true),               // 注册时校验地址有效性
 )
@@ -324,7 +311,7 @@ discovery, err := consul.NewDiscovery(
 )
 ```
 
-启用后，首次获取某服务列表时会启动 goroutine 通过 blocking query（`WaitTime=5min`）持续监听变更，并在本地缓存中更新服务列表。blocking query 相比轮询更节省连接资源：请求长时间挂起，仅在服务列表有变化或超时时返回。
+启用后，首次获取某服务列表时会启动 goroutine 通过 blocking query（`WaitTime=30s`）持续监听变更，并在本地缓存中更新服务列表。blocking query 相比轮询更节省连接资源：请求长时间挂起，仅在服务列表有变化或超时时返回。
 
 ## gRPC 服务发现
 
@@ -548,12 +535,12 @@ spec:
 1. **Go 版本**：本项目要求 Go >= 1.26.0（受 `hashicorp/consul/api` 依赖约束）。
 2. **Consul 版本**：基于 `hashicorp/consul/api` v1 实现，兼容 Consul 1.x 服务端。
 3. **watch 默认关闭**：出于简单性考虑，默认 `disableWatch` 为 `true`。生产环境中如果需要实时感知服务变化，建议通过 `WithEnableWatched()` 开启 blocking query 监听。
-4. **服务注册流程**：Register 分为三步——先注册 service，再注册 check，最后初始 TTL pass。任何一步失败都会回滚已执行的操作，确保 Consul 中不留残留数据。
+4. **服务注册流程**：Register 通过嵌入式 Check 一步完成服务注册与健康检查绑定，注册成功后自动启动 keepalive goroutine。
 5. **服务注销**：`Deregister` 会先停止 keepalive goroutine（退出前 best-effort 发送 `failing` 状态），再依次注销 check 和 service。若应用异常宕机未调用 `Deregister`，TTL 到期后 Consul 会自动标记 critical 并最终注销。
-6. **心跳间隔**：默认 TTL 为 30 秒，心跳间隔为 TTL/3 = 10 秒。可通过 `WithTTL` 调整，TTL 越短则故障检测越及时，但对 Consul agent 的压力也越大。TTL 值的解析使用 `time.ParseDuration`，支持 `"30s"`、`"1m"` 等格式。
-7. **deregisterCriticalServiceAfter 设置**：默认值为 90 秒（3 倍 TTL），应确保该值大于 TTL，否则服务可能在正常心跳间隙被误注销。
+6. **心跳间隔**：默认 TTL 为 10 秒，心跳间隔为 TTL/2 = 5 秒。可通过 `WithTTL` 调整，TTL 越短则故障检测越及时，但对 Consul agent 的压力也越大。TTL 值的解析使用 `time.ParseDuration`，支持 `"10s"`、`"1m"` 等格式。
+7. **deregisterCriticalServiceAfter 设置**：默认值为 1m，应确保该值大于 TTL，否则服务可能在正常心跳间隙被误注销。
 8. **地址解析**：注册时 `Address` 为空 host（如 `:8080`）或 `::` 时，会自动解析为本机第一个非回环 IPv4 地址。仅在 `WithValidateAddress(true)` 时生效。K8s 生产环境建议通过 Downward API 显式注入 Pod IP。
-9. **版本过滤**：版本号以 `hestia-version=v1` 形式存储为 Consul tag，Health API 基于 tag 精准匹配。Health API 的 `passingOnly=true` 会自动排除非健康实例。
+9. **版本过滤**：版本号以 `version:v1` 形式存储为 Consul tag，Health API 基于 tag 精准匹配。Health API 的 `passingOnly=true` 会自动排除非健康实例。
 10. **并发安全**：`consulDiscovery` 内部使用 `sync.RWMutex` 保护服务列表缓存，可安全并发调用 `GetServices` 和 `Get`。
 11. **错误处理**：当目标服务没有任何可用实例时，`GetServices` 返回 `hestia.ErrServicesNotFound`。
 12. **字段默认值**：注册时若 `Weight` 为 0，自动设置默认值 100；`Healthy` 在注册成功后为 `true`，注销后为 `false`；`InstanceID` 为空时自动生成 UUID。

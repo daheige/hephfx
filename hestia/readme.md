@@ -82,12 +82,12 @@ flowchart TB
 
 | hestia 字段 | Consul 字段 | 说明 |
 |---|---|---|
-| `InstanceID` | `AgentServiceRegistration.ID` | 服务唯一标识 |
+| `InstanceID` | `Tags` 中 `instance_id:xxx` + `AgentServiceRegistration.ID` | 服务唯一标识 |
 | `Name` | `AgentServiceRegistration.Name` | Consul 服务名 |
 | `Address` | `AgentServiceRegistration.Address` + `Port` | 主机与端口分离存储 |
-| `Version` | `Tags` 中 `hestia-version=v1` | 标签过滤 |
-| `Metadata/Tags` | `Meta` 中 `meta_xxx` / `tag_xxx` | 自定义元数据 |
-
+| `Version` | `Tags` 中 `version:v1` | 标签过滤 |
+| `Protocol` / `InstanceID` | `Tags` 中 `protocol:GRPC` / `instance_id:xxx` | 协议与实例标识 |
+| `Metadata` | `Meta`（直接映射） | 用户自定义元数据 |
 ### 核心接口
 
 ```go
@@ -363,7 +363,7 @@ flowchart TB
     Service["hestia.Service 实体"]
 
     subgraph ConsulImpl["hestia/consul 实现层"]
-        consulRegistry["consulRegistry\nRegister → ServiceRegister + CheckRegister + UpdateTTL\nDeregister → CheckDeregister + ServiceDeregister"]
+        consulRegistry["consulRegistry\nRegister → ServiceRegister (embedded Check)\nDeregister → CheckDeregister + ServiceDeregister"]
         consulDiscovery["consulDiscovery\nGetServices → Health.Service\nGet → RoundRobinHandler\nwatch → Blocking Query"]
         consulResolver["consulResolverBuilder / consulResolver\nscheme: consul"]
     end
@@ -445,15 +445,15 @@ func main() {
 registry, err := consul.NewRegistry(
     []string{"127.0.0.1:8500"},
     consul.WithDialTimeout(10*time.Second),              // 连接超时
-    consul.WithTTL("30s"),                               // TTL 健康检查间隔
-    consul.WithDeregisterCriticalServiceAfter("90s"),    // critical 后自动注销时间
-    consul.WithPrefix("hestia"),                         // 服务名前缀
+    consul.WithTTL("10s"),                               // TTL 健康检查间隔
+    consul.WithDeregisterCriticalServiceAfter("1m"),    // critical 后自动注销时间
+    consul.WithPrefix("/hestia/registry-consul"),                         // 服务名前缀
     consul.WithToken("your-acl-token"),                  // ACL token
     consul.WithValidateAddress(true),                    // 注册时校验地址有效性
 )
 ```
 
-**注册流程**：Register 分三步——先注册 service，再注册 check，最后初始 TTL pass。任何一步失败都会回滚已执行的操作，确保 Consul 中不留残留数据。注册成功后启动 keepalive goroutine，以 TTL/3 间隔定期心跳保活。
+**注册流程**：Register 通过嵌入式 Check 一步完成注册与健康检查绑定。注册成功后启动 keepalive goroutine，以 TTL/2 间隔定期心跳保活。
 
 ### 客户端服务发现和调用
 
@@ -514,7 +514,7 @@ discovery, err := consul.NewDiscovery(
 )
 ```
 
-启用后，首次获取某服务列表时会启动 goroutine 通过 blocking query（`WaitTime=5min`）持续监听变更，相比轮询更节省连接资源：请求长时间挂起，仅在服务列表变化或超时时返回。
+启用后，首次获取某服务列表时会启动 goroutine 通过 blocking query（`WaitTime=30s`）持续监听变更，相比轮询更节省连接资源：请求长时间挂起，仅在服务列表变化或超时时返回。
 
 ### gRPC Resolver
 
@@ -569,7 +569,7 @@ resolver.Register(builder)
 
 - `consul:///order_service/v1`：服务名 `order_service`，版本 `v1`
 - `consul:///order_service`：服务名 `order_service`，版本为空
-- resolver 仅将 `Protocol` 为空或 `hestia.ProtocolGRPC` 的实例纳入地址列表
+- resolver 仅将 `hestia.ProtocolGRPC` 的实例纳入地址列表
 - 当传入的 discovery 是 `*consulDiscovery` 时，resolver 直接复用其 blocking query 能力实时感知变更；否则退化为 10 秒轮询
 - 服务暂时不存在时不会报错，返回空地址列表并持续监听，服务注册后自动更新
 
@@ -737,11 +737,11 @@ spec:
 ### Consul 实现
 
 15. **Consul 版本**：基于 `hashicorp/consul/api` v1 实现，兼容 Consul 1.x 服务端。
-16. **注册流程**：Register 分三步——先注册 service，再注册 check，最后初始 TTL pass。任何一步失败都会回滚，确保不留残留数据。
-17. **心跳间隔**：默认 TTL 为 30 秒，心跳间隔为 TTL/3 = 10 秒。TTL 越短故障检测越及时，但对 Consul agent 压力越大。心跳间隔最小为 1 秒。TTL 值支持 `time.ParseDuration` 格式（如 `"30s"`、`"1m"`）。
-18. **deregisterCriticalServiceAfter**：默认 90 秒（3 倍 TTL），必须大于 TTL，否则正常心跳间隙可能被误注销。
+16. **注册流程**：Register 通过嵌入式 Check 一步完成服务注册与健康检查绑定，注册成功后自动启动 keepalive goroutine。
+17. **心跳间隔**：默认 TTL 为 10 秒，心跳间隔为 TTL/2 = 5 秒。TTL 越短故障检测越及时，但对 Consul agent 压力越大。心跳间隔最小为 1 秒。TTL 值支持 `time.ParseDuration` 格式（如 `"10s"`、`"1m"`）。
+18. **deregisterCriticalServiceAfter**：默认 1m，必须大于 TTL，否则正常心跳间隙可能被误注销。
 19. **服务注销**：`Deregister` 先停止 keepalive goroutine（退出前 best-effort 发送 `failing` 状态），再依次注销 check 和 service。若异常宕机未调用 `Deregister`，TTL 到期后 Consul 自动标记 critical 并最终注销。
-20. **版本过滤**：版本号以 `hestia-version=v1` 格式存储为 Consul tag，Health API 基于 tag 精准匹配，`passingOnly=true` 自动排除非健康实例。
+20. **版本过滤**：版本号以 `version:v1` 格式存储为 Consul tag，Health API 基于 tag 精准匹配，`passingOnly=true` 自动排除非健康实例。
 21. **endpoint 格式**：`NewRegistry` 和 `NewDiscovery` 接受 `host:port` 或 `http://host:port` 格式，实现层自动去除前缀。
 22. **认证**：支持通过 `WithToken` 配置 ACL token。
 

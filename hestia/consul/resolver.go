@@ -125,7 +125,7 @@ func (r *consulResolver) updateStateWithError(services []*hestia.Service, err er
 func (r *consulResolver) updateState(services []*hestia.Service) {
 	addrs := make([]resolver.Address, 0, len(services))
 	for _, s := range services {
-		if s.Protocol != "" && s.Protocol != hestia.ProtocolGRPC {
+		if s.Protocol != hestia.ProtocolGRPC {
 			continue
 		}
 

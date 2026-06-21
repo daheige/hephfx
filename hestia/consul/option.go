@@ -1,15 +1,19 @@
 package consul
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Options consul options
 type Options struct {
 	endpoints                      []string      // consul agent地址列表
 	dialTimeout                    time.Duration // 默认5s
-	ttl                            string        // health check ttl, 默认30s
-	deregisterCriticalServiceAfter string        // 服务被标记critical后自动注销的时间，默认90s
-	prefix                         string        // 服务名前缀，default:hestia
+	ttl                            string        // health check ttl, 默认10s
+	deregisterCriticalServiceAfter string        // 服务被标记critical后自动注销的时间，默认1m
+	prefix                         string        // key前缀，default:/hestia/registry-consul
 	token                          string        // consul ACL token
+	datacenter                     string        // consul datacenter
 	validateAddress                bool          // 是否校验address有效性，default:false
 	disableWatch                   bool          // 是否禁用watch，default:true
 }
@@ -53,6 +57,13 @@ func WithToken(token string) Option {
 	}
 }
 
+// WithDatacenter set consul datacenter
+func WithDatacenter(dc string) Option {
+	return func(o *Options) {
+		o.datacenter = dc
+	}
+}
+
 // WithValidateAddress whether to validate address
 func WithValidateAddress(validate bool) Option {
 	return func(o *Options) {
@@ -65,4 +76,10 @@ func WithEnableWatched() Option {
 	return func(o *Options) {
 		o.disableWatch = false
 	}
+}
+
+// normalizePrefix trims leading and trailing slashes from the prefix.
+func normalizePrefix(prefix string) string {
+	p := strings.TrimLeft(prefix, "/")
+	return strings.TrimRight(p, "/")
 }
