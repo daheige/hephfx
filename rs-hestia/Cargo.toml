@@ -2,6 +2,13 @@
 name = "rs-hestia"
 version = "0.1.0"
 edition = "2024"
+authors = ["daheige"]
+description = "rust hestia"
+keywords = ["rs-hestia", "hestia", "rust-hestia", "hestia", "rs-etcd"]
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/daheige/hephfx"
+documentation = "https://docs.rs/rs-hestia/"
 
 [dependencies]
 async-trait = "0.1.89"
