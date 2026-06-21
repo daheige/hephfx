@@ -25,8 +25,8 @@ pub trait Discovery: Send + Sync + Any {
         strategy: Option<StrategyHandler>,
     ) -> Result<Service>;
 
-    /// Returns the name of the discovery implementation.
-    fn name(&self) -> &str;
+    /// Returns the string identifier of the discovery implementation.
+    fn string(&self) -> &str;
 
     /// Returns the type as `Any` so that implementations can be downcast.
     ///

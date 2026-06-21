@@ -13,6 +13,6 @@ pub trait Registry: Send + Sync {
     /// Deregister a service instance when the application exits.
     async fn deregister(&self, ctx: &Context, service: &mut Service) -> Result<()>;
 
-    /// Returns the name of the registry.
-    fn name(&self) -> &str;
+    /// Returns the string identifier of the registry implementation.
+    fn string(&self) -> &str;
 }

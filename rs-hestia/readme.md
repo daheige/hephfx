@@ -33,8 +33,8 @@
 ```mermaid
 flowchart TB
     subgraph Abstract["hestia 抽象层"]
-        Registry["Registry trait\nregister() / deregister() / name()"]
-        Discovery["Discovery trait\nget_services() / get() / name()"]
+        Registry["Registry trait\nregister() / deregister() / string()"]
+        Discovery["Discovery trait\nget_services() / get() / string()"]
     end
 
     Service["Service 实体\nnetwork / name / address / version / weight\nprotocol / healthy / metadata / tags ..."]
@@ -76,7 +76,7 @@ flowchart TB
 pub trait Registry: Send + Sync + Any {
     async fn register(&self, ctx: &Context, service: &mut Service) -> Result<()>;
     async fn deregister(&self, ctx: &Context, service: &mut Service) -> Result<()>;
-    fn name(&self) -> &str;
+    fn string(&self) -> &str;
 }
 
 // Discovery 服务发现接口
@@ -84,7 +84,7 @@ pub trait Registry: Send + Sync + Any {
 pub trait Discovery: Send + Sync + Any {
     async fn get_services(&self, ctx: &Context, name: &str, version: &str) -> Result<Vec<Service>>;
     async fn get(&self, ctx: &Context, name: &str, version: &str, strategy: Option<StrategyHandler>) -> Result<Service>;
-    fn name(&self) -> &str;
+    fn string(&self) -> &str;
     fn as_any(&self) -> &dyn Any;
 }
 ```

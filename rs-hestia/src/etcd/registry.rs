@@ -101,7 +101,7 @@ impl Registry for EtcdRegistry {
         Ok(())
     }
 
-    fn name(&self) -> &str {
+    fn string(&self) -> &str {
         "etcd"
     }
 }

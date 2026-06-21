@@ -79,7 +79,7 @@ impl Discovery for EtcdDiscovery {
         handler(&services).ok_or(HestiaError::ServicesNotFound)
     }
 
-    fn name(&self) -> &str {
+    fn string(&self) -> &str {
         "etcd"
     }
 
