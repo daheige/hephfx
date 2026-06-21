@@ -287,42 +287,42 @@ pub type Context = tokio_util::sync::CancellationToken;
 
 1. **与 Go 版接口对齐**
 
-   Go 版 `hestia` 的接口签名如下：
+Go 版 `hestia` 的接口签名如下：
 
-   ```go
-   Register(ctx context.Context, s *Service) error
-   Deregister(ctx context.Context, s *Service) error
-   GetServices(ctx context.Context, name, version string) ([]*Service, error)
-   ```
+```go
+Register(ctx context.Context, s *Service) error
+Deregister(ctx context.Context, s *Service) error
+GetServices(ctx context.Context, name, version string) ([]*Service, error)
+```
 
-   Rust 版使用 `Context` 作为对应参数，让两个语言的方法签名在语义上保持一致：
+Rust 版使用 `Context` 作为对应参数，让两个语言的方法签名在语义上保持一致：
 
-   ```rust
-   async fn register(&self, ctx: &Context, service: &mut Service) -> Result<()>;
-   async fn deregister(&self, ctx: &Context, service: &mut Service) -> Result<()>;
-   async fn get_services(&self, ctx: &Context, name: &str, version: &str) -> Result<Vec<Service>>;
-   ```
+```rust
+async fn register(&self, ctx: &Context, service: &mut Service) -> Result<()>;
+async fn deregister(&self, ctx: &Context, service: &mut Service) -> Result<()>;
+async fn get_services(&self, ctx: &Context, name: &str, version: &str) -> Result<Vec<Service>>;
+```
 
 2. **支持调用方取消**
 
-   `CancellationToken` 提供协作式取消能力。当调用方希望提前终止注册/发现操作时，可以取消 `Context`：
+`CancellationToken` 提供协作式取消能力。当调用方希望提前终止注册/发现操作时，可以取消 `Context`：
 
-   ```rust
-   use rs_hestia::Context;
+```rust
+use rs_hestia::Context;
 
-   let ctx = Context::new();
-   let ctx_clone = ctx.clone();
+let ctx = Context::new();
+let ctx_clone = ctx.clone();
 
-   let handle = tokio::spawn(async move {
-       // registry 和 svc 需为已创建的变量
-       registry.register(&ctx_clone, &mut svc).await
-   });
+let handle = tokio::spawn(async move {
+   // registry 和 svc 需为已创建的变量
+   registry.register(&ctx_clone, &mut svc).await
+});
 
-   // 需要取消时
-   ctx.cancel();
-   ```
+// 需要取消时
+ctx.cancel();
+```
 
-   被传入的异步任务可以通过 `ctx.is_cancelled()` 或 `ctx.cancelled().await` 感知取消信号。
+被传入的异步任务可以通过 `ctx.is_cancelled()` 或 `ctx.cancelled().await` 感知取消信号。
 
 ### 基本用法
 

@@ -13,9 +13,9 @@
 //!   --advertise-client-urls http://0.0.0.0:2379
 //! ```
 
+use env_logger::Target;
 use rs_hestia::etcd::{Options, new_discovery, new_registry, new_resolver_builder};
 use rs_hestia::{Context, Service};
-use env_logger::Target;
 
 fn init_logger() {
     env_logger::builder().target(Target::Stdout).try_init().ok();
@@ -181,5 +181,8 @@ async fn test_registry() {
     thread::sleep(time::Duration::from_secs(100));
 
     // 注销服务
-    registry.deregister(&ctx, &mut svc).await.expect("deregister service");
+    registry
+        .deregister(&ctx, &mut svc)
+        .await
+        .expect("deregister service");
 }
