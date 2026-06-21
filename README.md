@@ -39,7 +39,9 @@ A microservice framework for gRPC.
 - **gRPC 服务封装**：基于 `google.golang.org/grpc` 封装服务端启动流程，支持纯 gRPC、gRPC + HTTP Gateway 双端口、以及单端口共存三种启动模式。
 - **HTTP Gateway 代理**：集成 `grpc-gateway/v2`，支持通过同一端口或独立端口暴露 RESTful API，并提供自定义路由、错误处理、Metadata 注入等扩展能力。
 - **中间件生态**：内置 panic 恢复、请求日志、请求校验、Prometheus 监控等拦截器，同时支持自定义 unary/stream 拦截器。
-- **服务注册与发现**：`hestia` 模块提供 `Registry` / `Discovery` 抽象接口，内置基于 etcd 的实现，支持 lease 心跳保活、版本隔离、watch 监听以及 gRPC resolver。
+- **服务注册与发现**：`hestia` 模块提供统一的 `Registry` / `Discovery` 抽象接口，支持按 `version` 进行服务注册与发现，内置负载均衡与 gRPC resolver。
+- **多注册中心支持**：Go 与 Rust 均内置基于 etcd 的实现；Rust 版 `rs-hestia` 额外提供 HashiCorp Consul 实现，二者共享 `Service` 实体与接口语义，支持跨语言服务互通。
+- **跨语言互通**：`Service` 字段与 JSON 格式在 Go 和 Rust 之间保持一致，Go 端注册的服务可被 Rust 客户端直接消费，反之亦然。
 - **可观测性**：`monitor` 模块集成 Prometheus 指标与 Go pprof，提供 HTTP 接口 `/metrics` 与 `/debug/pprof`。
 - **日志能力**：`logger` 模块基于 zap 封装，支持 JSON/文本输出、日志切割、文件/终端同时输出以及 Sentry 错误上报。
 - **配置读取**：`settings` 模块基于 viper 抽象统一的配置读取接口，支持文件热加载。
@@ -59,20 +61,36 @@ graph TB
             registry["Registry 接口"]
             discovery["Discovery 接口"]
             resolver["gRPC Resolver"]
-            etcdRegistry["etcdRegistry<br/>lease 保活 / 注销"]
-            etcdDiscovery["etcdDiscovery<br/>Get / GetServices / watch"]
-            etcdResolver["etcd:///service_name/version"]
+
+            subgraph hestiaImpl["注册中心实现"]
+                etcdRegistry["etcdRegistry<br/>lease 保活 / 注销"]
+                etcdDiscovery["etcdDiscovery<br/>Get / GetServices / watch"]
+                etcdResolver["etcd:///service_name/version"]
+
+                consulRegistry["ConsulRegistry<br/>TTL check / 注销"]
+                consulDiscovery["ConsulDiscovery<br/>Get / GetServices / watch"]
+                consulResolver["consul:///service_name/version"]
+            end
         end
     end
 
     registry --> etcdRegistry
+    registry --> consulRegistry
     discovery --> etcdDiscovery
+    discovery --> consulDiscovery
     resolver --> etcdResolver
+    resolver --> consulResolver
 
-    etcdRegistry --> etcd["etcd / 扩展注册中心"]
+    etcdRegistry --> etcd["etcd"]
     etcdDiscovery --> etcd
     etcdResolver --> etcd
+
+    consulRegistry --> consul["HashiCorp Consul"]
+    consulDiscovery --> consul
+    consulResolver --> consul
 ```
+
+> 说明：Consul 实现目前位于 `rs-hestia`（Rust）中；Go 版 `hestia` 当前仅内置 etcd 实现，但二者共享同一套 `Registry` / `Discovery` 抽象语义。`Service` 实体字段与 JSON 格式保持一致，便于跨语言服务互通。
 
 ### 运行模式
 
@@ -326,7 +344,7 @@ micro实战参考：
 
 ### hestia
 
-`hestia` 提供服务注册与发现能力，内置 etcd 实现。
+`hestia` 提供服务注册与发现能力，内置基于 etcd 的实现；Rust 版 `rs-hestia` 在此基础上额外提供 HashiCorp Consul 实现。两套实现共享 `Registry` / `Discovery` 抽象与 `Service` 实体定义，支持 `etcd:///service/version` 与 `consul:///service/version` 两种 gRPC resolver target，Go 与 Rust 服务可互相注册和发现。
 
 - 服务端注册
 

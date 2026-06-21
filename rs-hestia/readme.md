@@ -2,7 +2,7 @@
 
 `rs-hestia` 是 `hestia` 服务注册与服务发现模块的 Rust 实现版本，名字起源于希腊神话中的炉灶与家庭女神赫斯提亚（Hestia），寓意服务状态的持久性、稳定性与实时可见性。
 
-本 crate 保留了 Go 版 `github.com/daheige/hephfx/hestia` 的公开接口语义：`Service` 结构体、`Registry` / `Discovery` 抽象、内置负载策略、etcd 实现以及 tonic gRPC resolver。由于 `Service` 字段和 JSON 标签与 Go 版完全一致，Go 端注册的服务可以被 Rust 客户端直接消费，反之亦然。
+本 crate 保留了 Go 版 `github.com/daheige/hephfx/hestia` 的公开接口语义：`Service` 结构体、`Registry` / `Discovery` 抽象、内置负载策略、etcd 与 Consul 实现以及 tonic gRPC resolver。由于 `Service` 字段和 JSON 标签与 Go 版完全一致，Go 端注册的服务可以被 Rust 客户端直接消费，反之亦然。
 
 ## 目录
 
@@ -23,14 +23,20 @@
 ## 核心特性
 
 - **接口化设计**：定义 `Registry` 和 `Discovery` trait，便于扩展不同的注册中心实现。
-- **etcd 实现**：基于 `etcd-client` 实现服务注册与发现，利用 etcd lease 机制实现自动过期与心跳保活。
+- **多注册中心支持**：
+  - **etcd 实现**：基于 `etcd-client` 实现服务注册与发现，利用 etcd lease 机制实现自动过期与心跳保活。
+  - **Consul 实现**：基于 `reqwest` 调用 HashiCorp Consul HTTP API，通过 TTL health check 保活，并支持 blocking-query watch。
 - **服务元数据**：`Service` 支持 `network`、`name`、`address`、`naming_address`、`version`、`weight`、`protocol`、`healthy`、`created`、`metadata`、`tags` 等字段。
 - **版本隔离**：支持按 `version` 注册和发现服务，便于多版本共存。
 - **地址自动解析**：`resolve` 可将空 host（如 `:port`）或 `::` 解析为本机 IPv4 地址。
 - **负载均衡策略**：内置轮询策略 `round_robin_handler`，发现端支持传入自定义 `StrategyHandler`。
-- **watch 监听**：可选启用 etcd watch 实时感知服务上下线变化（默认关闭，通过 `with_enable_watched()` 开启）。
-- **认证支持**：etcd 实现支持通过用户名/密码连接注册中心。
-- **gRPC Resolver**：提供基于 etcd 的 tonic resolver，客户端可通过 `etcd:///service/version` 直接访问服务。
+- **watch 监听**：
+  - etcd 实现可选启用 etcd watch 实时感知服务上下线变化（默认关闭，通过 `with_enable_watched()` 开启）。
+  - Consul 实现可选启用 blocking-query watch 实时刷新本地缓存（默认关闭，通过 `with_enable_watch()` 开启）。
+- **认证支持**：
+  - etcd 实现支持通过用户名/密码连接注册中心。
+  - Consul 实现支持通过 ACL token 进行认证。
+- **gRPC Resolver**：提供基于 etcd 与 Consul 的 tonic resolver，客户端可通过 `etcd:///service/version` 或 `consul:///service/version` 直接访问服务。
 
 ## 架构设计
 
@@ -43,10 +49,18 @@ flowchart TB
 
     Service["Service 实体\nnetwork / name / address / version / weight\nprotocol / healthy / metadata / tags ..."]
 
-    subgraph Impl["hestia/etcd 实现层"]
-        EtcdRegistry["EtcdRegistry\nregister / deregister / keepalive"]
-        EtcdDiscovery["EtcdDiscovery\nget_services / get / watch"]
-        EtcdResolver["EtcdResolverBuilder / tonic Channel\ngRPC resolver"]
+    subgraph Impl["hestia 实现层"]
+        subgraph EtcdImpl["etcd 实现"]
+            EtcdRegistry["EtcdRegistry\nregister / deregister / keepalive"]
+            EtcdDiscovery["EtcdDiscovery\nget_services / get / watch"]
+            EtcdResolver["EtcdResolverBuilder / tonic Channel\netcd:///service/version"]
+        end
+
+        subgraph ConsulImpl["consul 实现"]
+            ConsulRegistry["ConsulRegistry\nregister / deregister / TTL check"]
+            ConsulDiscovery["ConsulDiscovery\nget_services / get / blocking-query watch"]
+            ConsulResolver["ConsulResolverBuilder / tonic Channel\nconsul:///service/version"]
+        end
     end
 
     Registry --> Service
@@ -54,22 +68,9 @@ flowchart TB
     Service --> EtcdRegistry
     Service --> EtcdDiscovery
     Service --> EtcdResolver
-```
-
-### 存储结构
-
-服务实例在 etcd 中的 key 格式如下：
-
-```text
-/{prefix}/{serviceName}/{version}/{instanceID}
-```
-
-默认 `prefix` 为 `/hestia/registry-etcd`。value 为 `Service` 序列化后的 JSON 数据。
-
-当 `version` 为空时，key 退化为：
-
-```text
-/{prefix}/{serviceName}/{instanceID}
+    Service --> ConsulRegistry
+    Service --> ConsulDiscovery
+    Service --> ConsulResolver
 ```
 
 ### 核心接口
@@ -92,6 +93,33 @@ pub trait Discovery: Send + Sync + Any {
     fn as_any(&self) -> &dyn Any;
 }
 ```
+
+### 存储结构
+
+#### etcd
+
+服务实例在 etcd 中的 key 格式如下：
+
+```text
+/{prefix}/{serviceName}/{version}/{instanceID}
+```
+
+默认 `prefix` 为 `/hestia/registry-etcd`。value 为 `Service` 序列化后的 JSON 数据。
+
+当 `version` 为空时，key 退化为：
+
+```text
+/{prefix}/{serviceName}/{instanceID}
+```
+
+#### consul
+
+Consul 实现通过 HTTP API 与 agent 交互：
+
+- 注册：调用 `/v1/agent/service/register`，将 `Service` 映射为 Consul service 定义，并附带 TTL health check。
+- 发现：调用 `/v1/health/service/{name}`，过滤出健康实例后反序列化为 `Service`。
+- `version` 通过 Consul tags 传递，格式为 `{prefix}/{version}`；空版本时仅保留 prefix。
+- 默认 prefix 为 `/hestia/registry-consul`，主要用于 tag 约定，不作为 KV 前缀。
 
 ## 快速开始
 
