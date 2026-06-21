@@ -439,6 +439,12 @@ cargo test --test consul_integration test_registry -- --ignored --nocapture
 RUST_LOG=info cargo test --test consul_integration -- --ignored --nocapture
 ```
 
+```shell
+cargo test --test consul_integration test_register -- --ignored 
+```
+测试运行效果如下
+![consul.png](consul.png)
+
 ### 测试结构说明
 
 - `src/consul/registry.rs`：测试地址解析、Tag 构建。

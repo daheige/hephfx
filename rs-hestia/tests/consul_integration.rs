@@ -47,7 +47,7 @@ async fn test_registry_and_discovery() {
     assert!(svc.healthy);
 
     // Give Consul a moment to mark the TTL check passing.
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
     let discovery = new_discovery(Options::new(endpoints()))
         .await
@@ -64,6 +64,56 @@ async fn test_registry_and_discovery() {
         .await
         .expect("deregister service");
     assert!(!svc.healthy);
+}
+
+#[tokio::test]
+#[ignore = "requires local consul on 127.0.0.1:8500"]
+async fn test_register() {
+    init_logger();
+    let ctx = Context::new();
+    let registry = new_registry(Options::new(endpoints()))
+        .await
+        .expect("create registry");
+
+    let mut svc = Service {
+        network: "tcp".to_string(),
+        name: "my-test".to_string(),
+        address: "127.0.0.1:18080".to_string(),
+        version: "v1".to_string(),
+        ..Default::default()
+    };
+
+    registry
+        .register(&ctx, &mut svc)
+        .await
+        .expect("register service");
+    assert!(!svc.instance_id.is_empty());
+    assert_eq!(svc.weight, 100);
+    assert!(svc.healthy);
+
+    // Give Consul a moment to mark the TTL check passing.
+    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+
+    registry
+        .deregister(&ctx, &mut svc)
+        .await
+        .expect("deregister service");
+    assert!(!svc.healthy);
+}
+
+#[tokio::test]
+#[ignore = "requires local consul on 127.0.0.1:8500"]
+async fn test_discovery(){
+    let ctx = Context::new();
+    let discovery = new_discovery(Options::new(endpoints()))
+        .await
+        .expect("create discovery");
+    let services = discovery
+        .get_services(&ctx, "my-test", "v1")
+        .await
+        .expect("get services");
+    assert!(!services.is_empty());
+    println!("{:#?}", services);
 }
 
 #[tokio::test]

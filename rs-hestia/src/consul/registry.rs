@@ -185,7 +185,7 @@ async fn keepalive(
 
     loop {
         interval.tick().await;
-        let mut req = client.get(&url);
+        let mut req = client.put(&url);
         if !token.is_empty() {
             req = req.header("X-Consul-Token", token);
         }
