@@ -6,17 +6,46 @@ use rand::RngExt as _;
 use serde::{Deserialize, Serialize};
 
 /// Protocol type used by a downstream service.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "UPPERCASE")]
+///
+/// Supports the well-known variants `Unspecified`, `Grpc`, and `Http`, plus
+/// arbitrary protocol strings via `Other` (e.g. `"TCP"`, `"WEBSOCKET"`).
+/// Empty strings deserialize as `Unspecified`; `GRPC`/`HTTP` are recognized
+/// case-insensitively and normalized to their well-known variants.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
 pub enum ProtocolType {
     /// No protocol specified. Treated as gRPC-compatible by the resolver.
+    /// 表示没有指定协议
     #[default]
-    #[serde(rename = "")]
     Unspecified,
     /// gRPC service.
     Grpc,
     /// HTTP/REST service.
     Http,
+    /// Any other protocol string.
+    Other(String),
+}
+
+impl From<String> for ProtocolType {
+    fn from(s: String) -> Self {
+        match s.to_uppercase().as_str() {
+            "" => Self::Unspecified,
+            "GRPC" => Self::Grpc,
+            "HTTP" => Self::Http,
+            _ => Self::Other(s),
+        }
+    }
+}
+
+impl From<ProtocolType> for String {
+    fn from(p: ProtocolType) -> Self {
+        match p {
+            ProtocolType::Unspecified => String::new(),
+            ProtocolType::Grpc => "GRPC".to_string(),
+            ProtocolType::Http => "HTTP".to_string(),
+            ProtocolType::Other(s) => s,
+        }
+    }
 }
 
 /// Service instance metadata.
@@ -184,5 +213,26 @@ mod tests {
         let decoded: Service = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.instance_id, "uuid-1");
         assert_eq!(decoded.protocol, ProtocolType::Grpc);
+    }
+
+    #[test]
+    fn test_protocol_type_arbitrary_string() {
+        let decoded: ProtocolType = serde_json::from_str("\"WEBSOCKET\"").unwrap();
+        assert_eq!(decoded, ProtocolType::Other("WEBSOCKET".to_string()));
+
+        let json = serde_json::to_string(&ProtocolType::Other("MQTT".to_string())).unwrap();
+        assert_eq!(json, "\"MQTT\"");
+    }
+
+    #[test]
+    fn test_protocol_type_case_insensitive_known_variants() {
+        assert_eq!(
+            serde_json::from_str::<ProtocolType>("\"grpc\"").unwrap(),
+            ProtocolType::Grpc
+        );
+        assert_eq!(
+            serde_json::from_str::<ProtocolType>("\"Http\"").unwrap(),
+            ProtocolType::Http
+        );
     }
 }

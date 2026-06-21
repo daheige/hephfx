@@ -68,7 +68,7 @@ impl Registry for EtcdRegistry {
             let ttl = self.lease_ttl;
             *handle = Some(tokio::spawn(async move {
                 if let Err(e) = keepalive(client, lease_id, ttl).await {
-                    tracing::error!("etcd keepalive failed: {}", e);
+                    log::error!("etcd keepalive failed: {}", e);
                 }
             }));
         }
@@ -116,6 +116,7 @@ impl EtcdRegistry {
     async fn register_service(&self, service: &Service, lease_id: i64) -> Result<()> {
         let value = serde_json::to_string(service)?;
         let key = register_key(&self.prefix, service);
+        // println!("register key:{}",key);
         let mut kv = self.client.kv_client();
         tokio::time::timeout(
             Duration::from_secs(15),
@@ -128,7 +129,7 @@ impl EtcdRegistry {
         .await
         .map_err(|e| HestiaError::Other(format!("register timeout: {}", e)))??;
 
-        tracing::info!(
+        log::info!(
             "register prefix:{} service:{} version:{} instance_id:{} lease_id:{} success",
             self.prefix,
             service.name,

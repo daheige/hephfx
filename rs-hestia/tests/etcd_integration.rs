@@ -15,6 +15,11 @@
 
 use rs_hestia::etcd::{Options, new_discovery, new_registry, new_resolver_builder};
 use rs_hestia::{Context, Service};
+use env_logger::Target;
+
+fn init_logger() {
+    env_logger::builder().target(Target::Stdout).try_init().ok();
+}
 
 fn endpoints() -> Vec<String> {
     vec!["http://127.0.0.1:12379".to_string()]
@@ -23,6 +28,7 @@ fn endpoints() -> Vec<String> {
 #[tokio::test]
 #[ignore = "requires local etcd on 127.0.0.1:12379"]
 async fn test_registry_and_discovery() {
+    init_logger();
     let ctx = Context::new();
     let registry = new_registry(Options::new(endpoints()))
         .await
@@ -64,6 +70,7 @@ async fn test_registry_and_discovery() {
 #[tokio::test]
 #[ignore = "requires local etcd on 127.0.0.1:12379"]
 async fn test_discovery_watch() {
+    init_logger();
     let ctx = Context::new();
     let registry = new_registry(Options::new(endpoints()))
         .await
@@ -109,6 +116,7 @@ async fn test_discovery_watch() {
 #[tokio::test]
 #[ignore = "requires local etcd on 127.0.0.1:12379"]
 async fn test_resolver_build() {
+    init_logger();
     let ctx = Context::new();
     let registry = new_registry(Options::new(endpoints()))
         .await
@@ -140,4 +148,38 @@ async fn test_resolver_build() {
         .deregister(&ctx, &mut svc)
         .await
         .expect("deregister service");
+}
+
+// cargo test --test etcd_integration test_registry -- --nocapture
+#[tokio::test]
+#[ignore = "requires local etcd on 127.0.0.1:12379"]
+async fn test_registry() {
+    init_logger();
+    use std::thread;
+    use std::time;
+    let ctx = Context::new();
+    let registry = new_registry(
+        Options::new(vec!["http://127.0.0.1:12379".to_string()])
+            .with_prefix("/services".to_string()),
+    )
+    .await
+    .expect("create registry");
+
+    let mut svc = Service {
+        name: "resolver-test".to_string(),
+        address: "127.0.0.1:18082".to_string(),
+        version: "v1".to_string(),
+        protocol: rs_hestia::ProtocolType::Grpc,
+        ..Default::default()
+    };
+
+    registry
+        .register(&ctx, &mut svc)
+        .await
+        .expect("register service");
+    // 停顿100s
+    thread::sleep(time::Duration::from_secs(100));
+
+    // 注销服务
+    registry.deregister(&ctx, &mut svc).await.expect("deregister service");
 }

@@ -13,6 +13,7 @@
 - [Context 设计和用法](#context-设计和用法)
 - [虚拟机或本机使用方式](#虚拟机或本机使用方式)
 - [Kubernetes 使用方式](#kubernetes-使用方式)
+- [单元测试](#单元测试)
 - [注意事项](#注意事项)
 - [许可证](#许可证)
 
@@ -116,12 +117,13 @@ docker run -d --name etcd \
 
 ```toml
 [dependencies]
-rs-hestia = { path = "../rs-hestia" }
+rs-hestia = "0.1.2"
 ```
 
-或使用 git 依赖：
+或直接使用 git 依赖：
 
 ```toml
+[dependencies]
 rs-hestia = { git = "https://github.com/daheige/hephfx.git", branch = "main" }
 ```
 
@@ -140,7 +142,7 @@ let svc = Service {
     instance_id: "".to_string(),         // 为空时 register 接口自动生成 UUID
     version: "v1".to_string(),
     weight: 100,                          // 默认 100，0 表示不参与负载均衡
-    protocol: ProtocolType::Http,         // Grpc / Http / Unspecified
+    protocol: ProtocolType::Http,         // Grpc / Http / Unspecified / Other(String)
     healthy: false,                       // 注册成功后被置为 true
     created: "2024-01-01 00:00:00".to_string(),
     metadata: Default::default(),
@@ -476,7 +478,7 @@ async fn main() -> rs_hestia::Result<()> {
 
 - `etcd:///order_service/v1`：服务名 `order_service`，版本 `v1`。
 - `etcd:///order_service`：服务名 `order_service`，版本为空。
-- resolver 仅使用 `protocol` 为空或 `ProtocolType::Grpc` 的服务实例；HTTP 服务不会被纳入 gRPC 地址列表。
+- resolver 仅使用 `protocol` 为 `ProtocolType::Grpc` 的服务实例；`Unspecified`、`Http`、`Other` 等均不会被纳入 gRPC 地址列表。
 - resolver 内部优先复用 `EtcdDiscovery` 的 watch 能力感知变更；若传入的 discovery 不是 etcd 实现，则退化为 10 秒轮询。
 
 ## Kubernetes 使用方式
@@ -537,6 +539,61 @@ registry.register(&ctx, &mut svc).await?;
 
 此时 `resolve` 会原样返回该地址，连接时由 gRPC/DNS 解析为 Pod IP。
 
+## 单元测试
+
+项目包含两类测试：不依赖外部服务的单元测试，以及需要本地 etcd 的集成测试。
+
+### 运行单元测试
+
+```bash
+cargo test --lib
+```
+
+### 运行集成测试
+
+`tests/etcd_integration.rs` 中的测试默认加了 `#[ignore]`，因为它们需要本地 etcd 节点。先用 Docker 启动 etcd：
+
+```bash
+docker run -d --name etcd \
+  -p 12379:2379 \
+  -p 12380:2380 \
+  quay.io/coreos/etcd:v3.5.18 \
+  /usr/local/bin/etcd \
+  --listen-client-urls http://0.0.0.0:2379 \
+  --advertise-client-urls http://0.0.0.0:2379
+```
+
+再执行被忽略的测试：
+
+```bash
+cargo test --test etcd_integration -- --ignored
+```
+
+### 查看测试输出
+
+集成测试内部使用 `env_logger` 将日志输出到 stdout。如需实时打印日志，追加 `--nocapture`：
+
+```bash
+# 运行单个被 ignore 的集成测试（如 test_registry）
+cargo test --test etcd_integration test_registry -- --ignored --nocapture
+
+# 运行全部集成测试
+cargo test --test etcd_integration -- --ignored --nocapture
+```
+
+可通过 `RUST_LOG` 控制日志级别，例如：
+
+```bash
+RUST_LOG=info cargo test --test etcd_integration test_registry -- --ignored --nocapture
+```
+
+### 测试结构说明
+
+- `src/service.rs`：测试 `Service` JSON 序列化/反序列化、`ProtocolType` 大小写不敏感和任意协议字符串、`round_robin` / `random` 负载策略。
+- `src/netaddr.rs`：测试地址解析、本地地址获取、IPv6 通配符处理。
+- `src/etcd/resolver.rs`：测试 target 字符串解析。
+- `tests/etcd_integration.rs`：测试 etcd 注册、发现、watch、resolver 构建等端到端流程。
+
 ## 注意事项
 
 1. **Rust 版本**：`Cargo.toml` 使用 `edition = "2024"`，要求 Rust >= 1.85.0，建议使用最新稳定版。
@@ -549,7 +606,7 @@ registry.register(&ctx, &mut svc).await?;
 8. **并发安全**：`EtcdDiscovery` 内部使用读写锁保护服务列表缓存，可安全并发调用 `get_services` 和 `get`。
 9. **错误处理**：当目标服务没有任何可用实例时，`get_services` 会返回 `HestiaError::ServicesNotFound`。
 10. **字段默认值**：注册时若 `weight` 为 0，会自动默认设置为 100；`healthy` 在注册成功后为 `true`，注销后为 `false`。
-11. **协议类型**：`protocol` 支持 `ProtocolType::Grpc` 和 `ProtocolType::Http`，gRPC resolver 会自动过滤掉非 Grpc 的实例。
+11. **协议类型**：`protocol` 支持 `ProtocolType::Grpc`、`ProtocolType::Http`、`ProtocolType::Unspecified` 和任意协议字符串（如 `ProtocolType::Other("WEBSOCKET".to_string())`）。空字符串反序列化为 `Unspecified`。gRPC resolver 仅将 `Grpc` 纳入地址列表，`Unspecified`、`Http` 和 `Other` 均会被过滤。
 12. **gRPC resolver 空列表**：服务暂时不存在时，resolver 不会直接失败，而是返回空地址列表并持续监听；待服务注册后会自动更新。
 
 ## 许可证

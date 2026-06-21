@@ -68,7 +68,7 @@ impl EtcdResolverBuilder {
                     tokio::spawn(async move {
                         let mut guard = current.lock().await;
                         if let Err(e) = apply_services(&mut tx, &services, &mut guard).await {
-                            tracing::error!("failed to update etcd state err: {}", e);
+                            log::error!("failed to update etcd state err: {}", e);
                         }
                     });
                 })
@@ -87,7 +87,7 @@ impl EtcdResolverBuilder {
                         Ok(services) => {
                             let mut guard = current.lock().await;
                             if let Err(e) = apply_services(&mut tx, &services, &mut guard).await {
-                                tracing::error!("failed to update etcd state err: {}", e);
+                                log::error!("failed to update etcd state err: {}", e);
                             }
                         }
                         Err(HestiaError::ServicesNotFound) => {
@@ -97,7 +97,7 @@ impl EtcdResolverBuilder {
                             }
                         }
                         Err(e) => {
-                            tracing::error!("poll discovery error: {}", e);
+                            log::error!("poll discovery error: {}", e);
                         }
                     }
                 }
@@ -161,7 +161,7 @@ async fn apply_services(
 ) -> Result<()> {
     let mut new_keys = HashSet::with_capacity(services.len());
     for s in services {
-        if s.protocol != ProtocolType::Unspecified && s.protocol != ProtocolType::Grpc {
+        if s.protocol != ProtocolType::Grpc {
             continue;
         }
 

@@ -23,6 +23,14 @@ A microservice framework for gRPC.
   - [monitor](#monitor)
   - [settings](#settings)
   - [ctxkeys / gutils](#ctxkeys--gutils)
+- [rs-hestia（rust语言实现）](#rs-hestiarust语言实现)
+  - [依赖引入](#依赖引入)
+  - [最小可用示例](#最小可用示例)
+  - [服务端注册](#服务端注册)
+  - [客户端发现](#客户端发现)
+  - [gRPC 客户端使用](#grpc-客户端使用)
+  - [Options 常用配置](#options-常用配置)
+  - [推荐项目结构](#推荐项目结构)
 - [许可证](#许可证)
 
 ## 核心特性
@@ -105,6 +113,18 @@ graph TB
 │   ├── registry.go               # Registry 接口
 │   ├── service_entity.go         # Service 实体定义
 │   └── netaddr.go                # 本机地址解析
+├── rs-hestia                     # hestia 的 Rust 实现版本
+│   ├── Cargo.toml / Cargo.lock   # Rust 包配置与依赖锁定
+│   ├── readme.md                 # rs-hestia 使用说明
+│   ├── src                       # 源码目录
+│   │   ├── lib.rs                # crate 入口
+│   │   ├── discovery.rs          # Discovery trait
+│   │   ├── registry.rs           # Registry trait
+│   │   ├── service.rs            # Service 实体与负载策略
+│   │   ├── netaddr.rs            # 地址解析
+│   │   ├── error.rs              # 错误定义
+│   │   └── etcd                  # etcd 注册、发现、resolver 实现
+│   └── tests                     # 集成测试
 ├── logger                        # 基于 zap 的日志组件
 │   └── example                   # logger 使用示例
 │       └── sentry                # Sentry 上报示例
@@ -380,6 +400,219 @@ requestID := ctxkeys.XRequestID.String()
 uuid := gutils.Uuid()
 stack := gutils.CatchStack()
 ```
+## rs-hestia（rust语言实现）
+
+`rs-hestia` 已发布到 crates.io，版本号跟随 `Cargo.toml` 定义（当前 `0.1.2`）。在 Rust 项目中使用时，只需在 `Cargo.toml` 中添加依赖，即可通过 `Registry` 注册服务、`Discovery` 发现服务、`EtcdResolver` 构建 tonic gRPC 通道。
+
+### 依赖引入
+
+```toml
+[dependencies]
+rs-hestia = "0.1.2"
+tokio = { version = "1", features = ["full"] }
+```
+
+如果使用 git 依赖：
+
+```toml
+# git 依赖
+rs-hestia = { git = "https://github.com/daheige/hephfx.git", branch = "main" }
+```
+
+### 最小可用示例
+
+下面是一个同时包含服务端注册和客户端发现的完整最小示例，假设本地已经通过 Docker 启动了 etcd（监听 `127.0.0.1:12379`）。
+
+```rust
+use rs_hestia::etcd::{Options, new_registry, new_discovery};
+use rs_hestia::{Context, Service, ProtocolType};
+
+#[tokio::main]
+async fn main() -> rs_hestia::Result<()> {
+    let ctx = Context::new();
+
+    // 1. 创建注册中心
+    let registry = new_registry(Options::new(vec![
+        "http://127.0.0.1:12379".to_string(),
+    ])).await?;
+
+    // 2. 创建发现中心
+    let discovery = new_discovery(Options::new(vec![
+        "http://127.0.0.1:12379".to_string(),
+    ])).await?;
+
+    // 3. 构造并注册服务
+    let mut svc = Service {
+        network: "tcp".to_string(),
+        name: "hello-service".to_string(),
+        address: ":8080".to_string(), // 空 host 自动解析为本机 IPv4
+        version: "v1".to_string(),
+        weight: 100,
+        protocol: ProtocolType::Http,
+        ..Default::default()
+    };
+    registry.register(&ctx, &mut svc).await?;
+    println!("registered: {}", svc.instance_id);
+
+    // 4. 发现服务
+    let list = discovery.get_services(&ctx, "hello-service", "v1").await?;
+    println!("discovered: {:?}", list);
+
+    // 5. 负载均衡选取一个实例
+    let selected = discovery.get(&ctx, "hello-service", "v1", None).await?;
+    println!("selected: {}://{}", selected.network, selected.address);
+
+    // 6. 应用退出时注销
+    registry.deregister(&ctx, &mut svc).await?;
+    Ok(())
+}
+```
+
+### 服务端注册
+
+服务端通常需要在启动时注册自身，并在进程退出前注销。注册成功后，`rs-hestia` 会自动维护 etcd lease keepalive，默认 TTL 为 60 秒。
+
+```rust
+use rs_hestia::etcd::{Options, new_registry};
+use rs_hestia::{Context, Service, ProtocolType};
+
+#[tokio::main]
+async fn main() -> rs_hestia::Result<()> {
+    let ctx = Context::new();
+
+    let registry = new_registry(
+        Options::new(vec!["http://127.0.0.1:12379".to_string()])
+            .with_lease_ttl(60),
+    ).await?;
+
+    let mut svc = Service {
+        network: "tcp".to_string(),
+        name: "order-service".to_string(),
+        address: ":8080".to_string(),
+        version: "v1".to_string(),
+        weight: 100,
+        protocol: ProtocolType::Grpc,
+        ..Default::default()
+    };
+
+    registry.register(&ctx, &mut svc).await?;
+    println!("registered instance_id: {}", svc.instance_id);
+
+    // 保持运行，直到收到退出信号
+    tokio::signal::ctrl_c().await.ok();
+
+    registry.deregister(&ctx, &mut svc).await?;
+    Ok(())
+}
+```
+
+### 客户端发现
+
+客户端通过 `Discovery` 获取服务列表或单个实例。`get` 方法默认使用内置轮询策略；传入 `Some(strategy)` 可覆盖。
+
+```rust
+use rs_hestia::etcd::{Options, new_discovery};
+use rs_hestia::{Context, Service};
+
+#[tokio::main]
+async fn main() -> rs_hestia::Result<()> {
+    let ctx = Context::new();
+
+    let discovery = new_discovery(
+        Options::new(vec!["http://127.0.0.1:12379".to_string()])
+            .with_enable_watched(), // 开启 watch 实时刷新本地缓存
+    ).await?;
+
+    // 获取全部健康实例
+    let services = discovery.get_services(&ctx, "order-service", "v1").await?;
+    println!("services: {:?}", services);
+
+    // 使用内置轮询策略
+    let svc = discovery.get(&ctx, "order-service", "v1", None).await?;
+    println!("round-robin: {}://{}", svc.network, svc.address);
+
+    // 自定义策略：总是返回第一个实例
+    let svc = discovery.get(
+        &ctx,
+        "order-service",
+        "v1",
+        Some(std::sync::Arc::new(|list: &[Service]| list.first().cloned())),
+    ).await?;
+
+    Ok(())
+}
+```
+
+### gRPC 客户端使用
+
+`rs-hestia` 提供了 tonic gRPC resolver。客户端可以通过 `etcd:///service/version` 形式的 target 直接构建 `Channel`。resolver 只会选取 `protocol` 为 `Grpc` 的实例，其他协议会被过滤。
+
+```rust
+use rs_hestia::etcd::{Options, new_discovery, build_channel};
+use rs_hestia::Context;
+
+#[tokio::main]
+async fn main() -> rs_hestia::Result<()> {
+    let _ctx = Context::new();
+
+    let discovery = new_discovery(Options::new(vec![
+        "http://127.0.0.1:12379".to_string(),
+    ])).await?;
+
+    // target 格式：etcd:///service_name/version
+    let channel = build_channel("etcd:///order-service/v1", discovery).await?;
+
+    // 用 channel 创建具体的 tonic gRPC client
+    // let client = order::OrderServiceClient::new(channel);
+
+    Ok(())
+}
+```
+
+### Options 常用配置
+
+`Options` 同时用于 `new_registry` 和 `new_discovery`，所有配置项均可链式调用：
+
+| 方法 | 默认值 | 说明 |
+|------|--------|------|
+| `with_endpoints` | `vec!["http://127.0.0.1:2379"]` | etcd 节点地址列表 |
+| `with_dial_timeout` | 5 秒 | 连接 etcd 超时时间 |
+| `with_lease_ttl` | 60 秒 | 注册租约 TTL |
+| `with_prefix` | `/hestia/registry-etcd` | etcd key 前缀 |
+| `with_username` / `with_password` | 空 | etcd 认证信息 |
+| `with_validate_address` | `false` | 注册时是否校验 address 格式 |
+| `with_enable_watched` | 关闭 | 开启 watch 实时刷新本地缓存 |
+
+```rust
+use std::time::Duration;
+use rs_hestia::etcd::{Options, new_registry};
+
+let registry = new_registry(
+    Options::new(vec!["http://127.0.0.1:12379".to_string()])
+        .with_dial_timeout(Duration::from_secs(10))
+        .with_lease_ttl(60)
+        .with_prefix("/myapp/registry")
+        .with_username("root")
+        .with_password("root")
+        .with_validate_address(true),
+).await?;
+```
+
+### 推荐项目结构
+
+在一个同时包含 gRPC server 和 client 的 Rust 项目中，可以按如下方式组织：
+
+```text
+myapp/
+├── Cargo.toml
+├── proto/              # .proto 文件
+├── src/
+│   ├── main.rs         # server 入口：初始化 registry 并注册服务
+│   ├── client.rs       # client 入口：通过 discovery/resolver 调用服务
+│   └── pb.rs           # tonic 生成的代码
+```
+
+服务端入口负责 `new_registry` + `register` + `keepalive`，客户端入口负责 `new_discovery` + `build_channel` 或 `get`，二者共享同一个 etcd 集群即可实现跨语言服务注册与发现。
 
 ## 许可证
 

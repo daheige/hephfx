@@ -13,9 +13,10 @@ pub use resolver::{
 use crate::error::{HestiaError, Result};
 
 pub(crate) async fn new_etcd_client(opt: &Options) -> Result<etcd_client::Client> {
-    let connect_opts = etcd_client::ConnectOptions::new()
-        .with_timeout(opt.dial_timeout)
-        .with_user(&opt.username, &opt.password);
+    let mut connect_opts = etcd_client::ConnectOptions::new().with_timeout(opt.dial_timeout);
+    if !opt.username.is_empty() {
+        connect_opts = connect_opts.with_user(&opt.username, &opt.password);
+    }
 
     etcd_client::Client::connect(opt.endpoints.clone(), Some(connect_opts))
         .await

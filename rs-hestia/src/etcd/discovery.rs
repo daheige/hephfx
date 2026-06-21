@@ -119,7 +119,7 @@ impl EtcdDiscovery {
         {
             Ok(ws) => ws,
             Err(e) => {
-                tracing::error!("etcd watch failed: {}", e);
+                log::error!("etcd watch failed: {}", e);
                 return;
             }
         };
@@ -138,7 +138,7 @@ impl EtcdDiscovery {
                                         callback(services);
                                     }
                                     Err(e) => {
-                                        tracing::error!(
+                                        log::error!(
                                             "reload etcd prefix:{} services error:{}",
                                             key,
                                             e
@@ -151,7 +151,7 @@ impl EtcdDiscovery {
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    tracing::error!("etcd watch stream error: {}", e);
+                    log::error!("etcd watch stream error: {}", e);
                     break;
                 }
             }
@@ -179,7 +179,7 @@ impl EtcdDiscovery {
             let entry: Service = match serde_json::from_slice(kv.value()) {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::warn!("unmarshal service failed, error: {}", e);
+                    log::warn!("unmarshal service failed, error: {}", e);
                     continue;
                 }
             };
