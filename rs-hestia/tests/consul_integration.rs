@@ -104,7 +104,27 @@ async fn test_register() {
 #[tokio::test]
 #[ignore = "requires local consul on 127.0.0.1:8500"]
 async fn test_discovery(){
+    init_logger();
     let ctx = Context::new();
+    let registry = new_registry(Options::new(endpoints()))
+        .await
+        .expect("create registry");
+
+    let mut svc = Service {
+        network: "tcp".to_string(),
+        name: "my-test".to_string(),
+        address: "127.0.0.1:18080".to_string(),
+        version: "v1".to_string(),
+        ..Default::default()
+    };
+
+    registry
+        .register(&ctx, &mut svc)
+        .await
+        .expect("register service");
+
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
     let discovery = new_discovery(Options::new(endpoints()))
         .await
         .expect("create discovery");
@@ -114,6 +134,11 @@ async fn test_discovery(){
         .expect("get services");
     assert!(!services.is_empty());
     println!("{:#?}", services);
+
+    registry
+        .deregister(&ctx, &mut svc)
+        .await
+        .expect("deregister service");
 }
 
 #[tokio::test]
@@ -124,9 +149,13 @@ async fn test_discovery_watch() {
     let registry = new_registry(Options::new(endpoints()))
         .await
         .expect("create registry");
-    let discovery = new_discovery(Options::new(endpoints()).with_enable_watch())
-        .await
-        .expect("create discovery with watch");
+    let discovery = new_discovery(
+        Options::new(endpoints())
+            .with_enable_watch()
+            .with_watch_interval(tokio::time::Duration::from_secs(1)),
+    )
+    .await
+    .expect("create discovery with watch");
 
     let mut svc = Service {
         name: "watch-test".to_string(),
@@ -149,16 +178,13 @@ async fn test_discovery_watch() {
         .expect("get services");
     assert!(!services.is_empty());
 
-    // Allow watch task to start.
-    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-
     registry
         .deregister(&ctx, &mut svc)
         .await
         .expect("deregister service");
 
-    // Wait for the watch to reflect the removal.
-    tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+    // Wait for the watch ticker to fire and poll again.
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     let services = discovery.get_services(&ctx, "watch-test", "v1").await;
     assert!(services.is_err() || services.unwrap().is_empty());
