@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,19 +17,23 @@ import (
 var _ hestia.Discovery = (*consulDiscovery)(nil)
 
 type consulDiscovery struct {
-	client       *consulapi.Client
-	serviceList  map[string][]*hestia.Service
-	disableWatch bool
-	mu           sync.RWMutex
+	client        *consulapi.Client
+	serviceList   map[string][]*hestia.Service
+	disableWatch  bool
+	prefix        string
+	watchInterval time.Duration
+	mu            sync.RWMutex
 }
 
 // NewDiscovery create a consul Discovery instance
 func NewDiscovery(endpoints []string, opts ...Option) (hestia.Discovery, error) {
 	opt := &Options{
-		endpoints:    endpoints,
-		dialTimeout:  5 * time.Second,
-		ttl:          "10s",
-		disableWatch: true,
+		endpoints:     endpoints,
+		dialTimeout:   5 * time.Second,
+		ttl:           "10s",
+		prefix:        "/hestia/registry-consul",
+		disableWatch:  true,
+		watchInterval: 30 * time.Second,
 	}
 
 	for _, o := range opts {
@@ -41,9 +46,11 @@ func NewDiscovery(endpoints []string, opts ...Option) (hestia.Discovery, error) 
 	}
 
 	d := &consulDiscovery{
-		client:       client,
-		serviceList:  make(map[string][]*hestia.Service, 20),
-		disableWatch: opt.disableWatch,
+		client:        client,
+		serviceList:   make(map[string][]*hestia.Service, 20),
+		disableWatch:  opt.disableWatch,
+		prefix:        opt.prefix,
+		watchInterval: opt.watchInterval,
 	}
 
 	return d, nil
@@ -118,37 +125,33 @@ func (d *consulDiscovery) watch(ctx context.Context, name string, version string
 	})
 }
 
-// watchWithCallback watches the service and invokes callback on every change
-// using Consul blocking queries.
+// watchWithCallback periodically polls the service and invokes callback on every tick.
 func (d *consulDiscovery) watchWithCallback(ctx context.Context, name string, version string,
 	callback func([]*hestia.Service, error)) {
-	tag := buildVersionFilter(version)
-	q := &consulapi.QueryOptions{
-		WaitTime: 30 * time.Second,
-	}
+	ticker := time.NewTicker(d.watchInterval)
+	defer ticker.Stop()
+
+	// Fetch once immediately on start
+	d.pollAndCallback(ctx, name, version, callback)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case <-ticker.C:
+			d.pollAndCallback(ctx, name, version, callback)
 		}
-
-		entries, meta, err := d.client.Health().Service(name, tag, true, q)
-		if err != nil {
-			callback(nil, fmt.Errorf("consul health service %s error: %v", name, err))
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(3 * time.Second):
-			}
-			continue
-		}
-
-		q.WaitIndex = meta.LastIndex
-		services := mapToServices(entries)
-		callback(services, nil)
 	}
+}
+
+func (d *consulDiscovery) pollAndCallback(ctx context.Context, name string, version string,
+	callback func([]*hestia.Service, error)) {
+	services, err := d.getServicesByName(ctx, name, version)
+	if err != nil {
+		callback(nil, err)
+		return
+	}
+	callback(services, nil)
 }
 
 func (d *consulDiscovery) getServicesByName(ctx context.Context,
@@ -160,6 +163,7 @@ func (d *consulDiscovery) getServicesByName(ctx context.Context,
 		return nil, fmt.Errorf("consul health service %s error: %v", name, err)
 	}
 
+	entries = filterByPrefix(entries, d.prefix)
 	return mapToServices(entries), nil
 }
 
@@ -182,6 +186,19 @@ func tagValue(tags []string, prefix string) string {
 	return ""
 }
 
+// parseWeight returns the weight from the "weight:" tag, default 100.
+func parseWeight(tags []string) uint32 {
+	s := tagValue(tags, "weight:")
+	if s == "" {
+		return 100
+	}
+	w, err := strconv.ParseUint(s, 10, 32)
+	if err != nil {
+		return 100
+	}
+	return uint32(w)
+}
+
 // mapToServices maps Consul ServiceEntry list to hestia.Service list
 func mapToServices(entries []*consulapi.ServiceEntry) []*hestia.Service {
 	services := make([]*hestia.Service, 0, len(entries))
@@ -191,20 +208,50 @@ func mapToServices(entries []*consulapi.ServiceEntry) []*hestia.Service {
 			services = append(services, s)
 		}
 	}
+
 	return services
+}
+
+// filterByPrefix returns only the entries whose service tags contain the
+// matching prefix tag. When prefix is empty, all entries are returned.
+func filterByPrefix(entries []*consulapi.ServiceEntry, prefix string) []*consulapi.ServiceEntry {
+	if prefix == "" {
+		return entries
+	}
+
+	target := "prefix:" + normalizePrefix(prefix)
+	filtered := entries[:0]
+	for _, entry := range entries {
+		for _, tag := range entry.Service.Tags {
+			if tag == target {
+				filtered = append(filtered, entry)
+				break
+			}
+		}
+	}
+
+	return filtered
 }
 
 // mapToService maps a single Consul ServiceEntry to hestia.Service
 func mapToService(entry *consulapi.ServiceEntry) *hestia.Service {
 	svc := entry.Service
 
-	// Read version, protocol, instance_id from tags (Rust convention)
+	// Read fields from tags
+	prefix := tagValue(svc.Tags, "prefix:")
 	version := tagValue(svc.Tags, "version:")
 	protocolStr := tagValue(svc.Tags, "protocol:")
 	instanceID := tagValue(svc.Tags, "instance_id:")
 	if instanceID == "" {
 		instanceID = svc.ID
 	}
+	network := tagValue(svc.Tags, "network:")
+	if network == "" {
+		network = "tcp"
+	}
+	weight := parseWeight(svc.Tags)
+	created := tagValue(svc.Tags, "created:")
+	namingAddress := tagValue(svc.Tags, "naming_address:")
 
 	// Node address fallback when service address is empty
 	host := svc.Address
@@ -212,24 +259,47 @@ func mapToService(entry *consulapi.ServiceEntry) *hestia.Service {
 		host = entry.Node.Address
 	}
 
-	// Build metadata from svc.Meta directly (no prefix processing)
+	// Build metadata from svc.Meta directly
 	metadata := make(map[string]interface{}, len(svc.Meta))
 	for k, v := range svc.Meta {
 		metadata[k] = v
 	}
 
+	// Build tags from Consul service tags
+	tags := map[string]string{
+		"prefix": prefix,
+	}
+	if version != "" {
+		tags["version"] = version
+	}
+	if protocolStr != "" {
+		tags["protocol"] = protocolStr
+	}
+	if instanceID != "" {
+		tags["instance_id"] = instanceID
+	}
+	if network != "" {
+		tags["network"] = network
+	}
+	if created != "" {
+		tags["created"] = created
+	}
+	if namingAddress != "" {
+		tags["naming_address"] = namingAddress
+	}
+
 	return &hestia.Service{
-		Network:       "tcp",
+		Network:       network,
 		Name:          svc.Service,
 		Address:       fmt.Sprintf("%s:%d", host, svc.Port),
-		NamingAddress: "",
+		NamingAddress: namingAddress,
 		InstanceID:    instanceID,
 		Version:       version,
-		Weight:        100,
+		Weight:        weight,
 		Protocol:      hestia.ProtocolType(protocolStr),
 		Healthy:       true,
-		Created:       "",
+		Created:       created,
 		Metadata:      metadata,
-		Tags:          map[string]string{},
+		Tags:          tags,
 	}
 }

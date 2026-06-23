@@ -40,7 +40,7 @@ A microservice framework for gRPC.
 - **HTTP Gateway 代理**：集成 `grpc-gateway/v2`，支持通过同一端口或独立端口暴露 RESTful API，并提供自定义路由、错误处理、Metadata 注入等扩展能力。
 - **中间件生态**：内置 panic 恢复、请求日志、请求校验、Prometheus 监控等拦截器，同时支持自定义 unary/stream 拦截器。
 - **服务注册与发现**：`hestia` 模块提供统一的 `Registry` / `Discovery` 抽象接口，支持按 `version` 进行服务注册与发现，内置负载均衡与 gRPC resolver。
-- **多注册中心支持**：Go 与 Rust 均内置基于 etcd 的实现；Rust 版 `rs-hestia` 额外提供 HashiCorp Consul 实现，二者共享 `Service` 实体与接口语义，支持跨语言服务互通。
+- **多注册中心支持**：Go 与 Rust 均内置 etcd 与 Consul 两种注册中心实现，共享 `Service` 实体与接口语义，支持跨语言服务互通。
 - **跨语言互通**：`Service` 字段与 JSON 格式在 Go 和 Rust 之间保持一致，Go 端注册的服务可被 Rust 客户端直接消费，反之亦然。
 - **可观测性**：`monitor` 模块集成 Prometheus 指标与 Go pprof，提供 HTTP 接口 `/metrics` 与 `/debug/pprof`。
 - **日志能力**：`logger` 模块基于 zap 封装，支持 JSON/文本输出、日志切割、文件/终端同时输出以及 Sentry 错误上报。
@@ -90,7 +90,7 @@ graph TB
     consulResolver --> consul
 ```
 
-> 说明：Consul 实现目前位于 `rs-hestia`（Rust）中；Go 版 `hestia` 当前仅内置 etcd 实现，但二者共享同一套 `Registry` / `Discovery` 抽象语义。`Service` 实体字段与 JSON 格式保持一致，便于跨语言服务互通。
+> 说明：Go 与 Rust 均提供 etcd 与 Consul 两种注册中心实现，二者共享同一套 `Registry` / `Discovery` 抽象语义。`Service` 实体字段与 JSON 格式保持一致，便于跨语言服务互通。
 
 ### 运行模式
 
@@ -127,7 +127,14 @@ graph TB
 │       └── validator_gen         # 校验码生成工具
 ├── ctxkeys                       # 上下文键名常量（request_id、client_ip 等）
 ├── gutils                        # 通用工具函数（UUID、MD5、随机数、堆栈捕获等）
-├── hestia                        # 服务注册与发现抽象与 etcd 实现
+├── hestia                        # 服务注册与发现抽象，etcd 与 Consul 实现
+│   ├── consul                    # consul 注册中心、发现、resolver 实现
+│   │   ├── discovery.go          # consul Discovery 实现
+│   │   ├── option.go             # consul 配置选项
+│   │   ├── registry.go           # consul Registry 实现
+│   │   ├── resolver.go           # consul gRPC Resolver 实现
+│   │   ├── readme.md             # consul 使用说明
+│   │   └── *_test.go             # 单元/集成测试
 │   ├── etcd                      # etcd 注册中心、发现、resolver 实现
 │   │   ├── etcd.go               # etcd 客户端封装
 │   │   ├── option.go             # etcd 配置选项
@@ -344,7 +351,7 @@ micro实战参考：
 
 ### hestia
 
-`hestia` 提供服务注册与发现能力，内置基于 etcd 的实现；Rust 版 `rs-hestia` 在此基础上额外提供 HashiCorp Consul 实现。两套实现共享 `Registry` / `Discovery` 抽象与 `Service` 实体定义，支持 `etcd:///service/version` 与 `consul:///service/version` 两种 gRPC resolver target，Go 与 Rust 服务可互相注册和发现。
+`hestia` 提供服务注册与发现能力，内置 etcd 与 Consul 两种注册中心实现；Rust 版 `rs-hestia` 同样提供 etcd 与 Consul 实现。两套实现共享 `Registry` / `Discovery` 抽象与 `Service` 实体定义，支持 `etcd:///service/version` 与 `consul:///service/version` 两种 gRPC resolver target，Go 与 Rust 服务可互相注册和发现。
 
 - 服务端注册
 
@@ -435,13 +442,13 @@ stack := gutils.CatchStack()
 ```
 ## rs-hestia（rust语言实现）
 
-`rs-hestia` 已发布到 crates.io，版本号跟随 `Cargo.toml` 定义（当前 `0.1.2`）。在 Rust 项目中使用时，只需在 `Cargo.toml` 中添加依赖，即可通过 `Registry` 注册服务、`Discovery` 发现服务、`EtcdResolver` 构建 tonic gRPC 通道。
+`rs-hestia` 已发布到 crates.io，版本号跟随 `Cargo.toml` 定义（当前 `0.1.6`）。在 Rust 项目中使用时，只需在 `Cargo.toml` 中添加依赖，即可通过 `Registry` 注册服务、`Discovery` 发现服务、`EtcdResolver` 构建 tonic gRPC 通道。
 
 ### 依赖引入
 
 ```toml
 [dependencies]
-rs-hestia = "0.1.2"
+rs-hestia = "0.1.6"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -749,7 +756,7 @@ async fn main() -> rs_hestia::Result<()> {
 - `consul:///order_service/v1`：服务名 `order_service`，版本 `v1`。
 - `consul:///order_service`：服务名 `order_service`，版本为空。
 - resolver 仅选取 `protocol` 为 `Grpc` 的实例，其他协议会被过滤。
-- 若传入的 discovery 是 `ConsulDiscovery`，resolver 会复用其 blocking-query watch 能力；否则退化为 10 秒轮询。
+- 若传入的 discovery 是 `ConsulDiscovery`，resolver 会复用其定期轮询 watch 能力；否则退化为 10 秒轮询。
 
 #### 更多文档
 

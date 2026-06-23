@@ -18,9 +18,9 @@
 
 - **接口化设计**：实现 `hestia.Registry` 和 `hestia.Discovery` 接口，与 etcd 实现无缝切换。
 - **TTL 健康检查**：基于 Consul Agent 的 TTL check 机制，注册时通过嵌入式 Check 一步完成服务注册与健康检查绑定；注册后以 TTL/2 间隔定期心跳保活，服务退出后停止心跳，TTL 到期自动标记 critical 并最终注销。
-- **Blocking Query Watch**：通过 Consul 原生 long polling（blocking query）实现服务列表变更的实时监听（默认 `WaitTime=30s`），相比 etcd watch 更节省连接资源。
+- **Periodic Watch**：通过 `time.Ticker` 定期轮询 Consul Health API 感知服务列表变更（默认间隔 30s），实现简单可靠。
 - **版本隔离**：版本号以 `version:v1` 格式存储为 Consul tag，发现时通过 Health API 的 `tag=version:v1` 参数精准过滤。
-- **元数据映射**：关键字段（`prefix`、`version`、`protocol`、`instance_id`）存储在 Consul `Tags` 中（可索引可过滤）；用户自定义 `metadata` 存储在 Consul `Meta` 中（键值对）。
+- **元数据映射**：关键字段（`prefix`、`version`、`protocol`、`instance_id`、`network`、`weight`、`created`、`naming_address`）存储为 Consul `Tags`（可索引可过滤）；用户自定义 `metadata` 存储在 Consul `Meta` 中（键值对）。
 - **地址自动解析**：`hestia.Resolve` 可自动将 `:port` 或 `::` 解析为本机 IPv4 地址。
 - **负载均衡策略**：内置轮询策略 `hestia.RoundRobinHandler`，发现端支持传入自定义 `StrategyHandler`。
 - **ACL 支持**：通过 `WithToken` 配置 Consul ACL token。
@@ -39,8 +39,8 @@ flowchart TB
 
     subgraph ConsulImpl["hestia/consul 实现层"]
         consulRegistry["consulRegistry<br/>Register → ServiceRegister (embedded Check)<br/>Deregister → CheckDeregister + ServiceDeregister<br/>keepalive → TTL/2 心跳"]
-        consulDiscovery["consulDiscovery<br/>GetServices → Health.Service<br/>Get → RoundRobinHandler<br/>watch → Blocking Query (30s)"]
-        consulResolver["consulResolverBuilder / consulResolver<br/>gRPC resolver<br/>scheme: consul"]
+        consulDiscovery["consulDiscovery<br/>GetServices → Health.Service (prefix 过滤)<br/>Get → RoundRobinHandler<br/>watch → Ticker 定期轮询 (30s)"]
+        consulResolver["consulResolverBuilder / consulResolver<br/>gRPC resolver<br/>scheme: consul<br/>复用 discovery 的 watch/poll 能力"]
     end
 
     subgraph ConsulAgent["Consul Agent"]
@@ -70,8 +70,13 @@ flowchart TB
 | `Address` (port) | `AgentServiceRegistration.Port` | 端口号 |
 | `Version` | `Tags` 中 `version:v1` | 版本号，Consul tag 索引，支持 Health API 过滤 |
 | `Protocol` | `Tags` 中 `protocol:GRPC` | 协议类型（GRPC / HTTP 等） |
-| `Prefix` | `Tags` 中 `prefix:xxx` | 注册前缀标识 |
+| `Prefix` | `Tags` 中 `prefix:xxx` | 注册前缀标识，发现端按此 tag 过滤实现命名空间隔离 |
+| `Network` | `Tags` 中 `network:tcp` | 网络类型（tcp / udp），默认 tcp |
+| `Weight` | `Tags` 中 `weight:100` | 负载均衡权重，默认 100 |
+| `Created` | `Tags` 中 `created:xxx` | 服务创建时间 |
+| `NamingAddress` | `Tags` 中 `naming_address:xxx` | K8s 命名服务地址 |
 | `Metadata` | `Meta`（直接映射） | 用户自定义 metadata 键值对 |
+| `Tags` | 从 Consul Tags 完整还原 | 包含 prefix/version/protocol/instance_id/network/weight/created/naming_address |
 
 ### 注册流程
 
@@ -130,7 +135,7 @@ flowchart TD
     Empty -- 否 --> StoreCache["存入本地缓存"]
 
     StoreCache --> WatchOff2{"disableWatch?"}
-    WatchOff2 -- false --> StartWatch["启动 goroutine<br/>Blocking Query watch"]
+    WatchOff2 -- false --> StartWatch["启动 goroutine<br/>Ticker 定期轮询"]
     WatchOff2 -- true --> ReturnSvc["返回服务列表"]
     StartWatch --> ReturnSvc
 
@@ -302,16 +307,17 @@ func main() {
 
 ### 启用 watch 监听
 
-默认情况下，`GetServices` 每次都会从 Consul 拉取最新数据。如需启用本地缓存并通过 blocking query 实时刷新，可配置：
+默认情况下，`GetServices` 每次都会从 Consul 拉取最新数据。如需启用本地缓存并定期刷新，可配置：
 
 ```go
 discovery, err := consul.NewDiscovery(
     []string{"127.0.0.1:8500"},
     consul.WithEnableWatched(),
+    consul.WithWatchInterval(30*time.Second), // 可选，调整轮询间隔
 )
 ```
 
-启用后，首次获取某服务列表时会启动 goroutine 通过 blocking query（`WaitTime=30s`）持续监听变更，并在本地缓存中更新服务列表。blocking query 相比轮询更节省连接资源：请求长时间挂起，仅在服务列表有变化或超时时返回。
+启用后，首次获取某服务列表时会启动 goroutine 通过 `time.Ticker` 定期拉取最新服务列表（默认间隔 30s），并在本地缓存中更新。可通过 `WithWatchInterval` 自定义轮询间隔。
 
 ## gRPC 服务发现
 
@@ -321,7 +327,7 @@ discovery, err := consul.NewDiscovery(
 
 gRPC resolver 构建在 `hestia.Discovery` 接口之上，不直接依赖 Consul API：
 
-- 当传入的 discovery 是 `*consulDiscovery` 时，resolver 直接复用其内部的 `watchWithCallback` 方法，通过 Consul blocking query 实时感知服务变更
+- 当传入的 discovery 是 `*consulDiscovery` 时，resolver 直接复用其内部的 `watchWithCallback` 方法，通过 Ticker 定期轮询感知服务变更（含 prefix 过滤）
 - 当传入其他 discovery 实现时，退化为 10 秒轮询模式
 
 ```mermaid
@@ -332,7 +338,7 @@ flowchart TD
     InitFetch --> Update["updateState<br/>推送地址到 gRPC ClientConn"]
     Update --> TypeCheck{"discovery 是 *consulDiscovery?"}
 
-    TypeCheck -- 是 --> Watch["复用 consulDiscovery.watchWithCallback<br/>Blocking Query 实时监听"]
+    TypeCheck -- 是 --> Watch["复用 consulDiscovery.watchWithCallback<br/>Ticker 定期轮询 (prefix 过滤)"]
     TypeCheck -- 否 --> Poll["goroutine 轮询<br/>每 10s GetServices"]
 ```
 
@@ -534,7 +540,7 @@ spec:
 
 1. **Go 版本**：本项目要求 Go >= 1.26.0（受 `hashicorp/consul/api` 依赖约束）。
 2. **Consul 版本**：基于 `hashicorp/consul/api` v1 实现，兼容 Consul 1.x 服务端。
-3. **watch 默认关闭**：出于简单性考虑，默认 `disableWatch` 为 `true`。生产环境中如果需要实时感知服务变化，建议通过 `WithEnableWatched()` 开启 blocking query 监听。
+3. **watch 默认关闭**：出于简单性考虑，默认 `disableWatch` 为 `true`。生产环境中如需实时感知服务变化，建议通过 `WithEnableWatched()` 开启 Ticker 定期轮询，可通过 `WithWatchInterval` 调整轮询间隔（默认 30s）。
 4. **服务注册流程**：Register 通过嵌入式 Check 一步完成服务注册与健康检查绑定，注册成功后自动启动 keepalive goroutine。
 5. **服务注销**：`Deregister` 会先停止 keepalive goroutine（退出前 best-effort 发送 `failing` 状态），再依次注销 check 和 service。若应用异常宕机未调用 `Deregister`，TTL 到期后 Consul 会自动标记 critical 并最终注销。
 6. **心跳间隔**：默认 TTL 为 10 秒，心跳间隔为 TTL/2 = 5 秒。可通过 `WithTTL` 调整，TTL 越短则故障检测越及时，但对 Consul agent 的压力也越大。TTL 值的解析使用 `time.ParseDuration`，支持 `"10s"`、`"1m"` 等格式。
@@ -547,7 +553,7 @@ spec:
 13. **协议过滤**：gRPC resolver 仅推送 `Protocol` 为空或 `hestia.ProtocolGRPC` 的实例；HTTP 服务不会被纳入 gRPC 地址列表。
 14. **gRPC resolver 空列表**：服务暂时不存在时，resolver 不会直接失败，而是返回空地址列表并持续监听；待服务注册后会自动更新。
 15. **endpoint 格式**：`NewRegistry` 和 `NewDiscovery` 接受 `host:port` 格式（如 `127.0.0.1:8500`），也兼容带 `http://` 前缀的格式，实现层会自动去除前缀。
-16. **与 etcd 实现的差异**：Consul 使用 Agent API 管理服务而非 KV 存储；使用 TTL check 而非 lease 续约；watch 使用 blocking query 而非 etcd 的 watch channel。接口层面完全兼容，业务代码无需修改即可切换注册中心。
+16. **与 etcd 实现的差异**：Consul 使用 Agent API 管理服务而非 KV 存储；使用 TTL check 而非 lease 续约；watch 使用 Ticker 定期轮询而非 etcd 的 watch channel；服务发现通过 `prefix` tag 过滤实现命名空间隔离。接口层面完全兼容，业务代码无需修改即可切换注册中心。
 17. **keepalive 保底时间**：心跳间隔最小为 1 秒，即使 TTL 解析结果小于 3 秒，也不会低于此下限，避免对 Consul agent 造成过高频率的请求。
 
 ## 许可证

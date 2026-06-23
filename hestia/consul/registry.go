@@ -201,6 +201,16 @@ func buildTags(s *hestia.Service, prefix string) []string {
 	}
 	tags = append(tags, "protocol:"+string(s.Protocol))
 	tags = append(tags, "instance_id:"+s.InstanceID)
+	if s.Network != "" {
+		tags = append(tags, "network:"+s.Network)
+	}
+	tags = append(tags, "weight:"+strconv.FormatUint(uint64(s.Weight), 10))
+	if s.Created != "" {
+		tags = append(tags, "created:"+s.Created)
+	}
+	if s.NamingAddress != "" {
+		tags = append(tags, "naming_address:"+s.NamingAddress)
+	}
 	return tags
 }
 

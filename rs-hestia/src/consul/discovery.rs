@@ -1,7 +1,6 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -12,7 +11,7 @@ use crate::discovery::Discovery;
 use crate::error::{HestiaError, Result};
 use crate::service::{ProtocolType, Service, StrategyHandler};
 
-use super::{Options, base_url, new_http_client};
+use super::{Options, base_url, new_http_client, normalize_prefix};
 
 /// Consul-backed [`Discovery`] implementation.
 #[derive(Clone)]
@@ -87,72 +86,44 @@ impl ConsulDiscovery {
     async fn watch(&self, name: &str, version: &str) {
         let name = name.to_string();
         let version = version.to_string();
-        self.watch_with_callback(&name, &version, move |_services| {
-            // Internal cache update is intentionally a no-op here because
-            // `get_services` already writes to the cache.
+        let service_list = Arc::clone(&self.service_list);
+        let name_clone = name.clone();
+        self.watch_with_callback(&name, &version, move |services| {
+            let service_list = Arc::clone(&service_list);
+            let name = name_clone.clone();
+            tokio::spawn(async move {
+                let mut list = service_list.write().await;
+                list.insert(name, services);
+            });
         })
         .await;
     }
 
+    /// Periodically polls the service and invokes the callback on every tick.
     pub(crate) async fn watch_with_callback(
         &self,
         name: &str,
         version: &str,
         callback: impl Fn(Vec<Service>) + Send + 'static,
     ) {
-        let wait = "30s";
-        let mut index: Option<String> = None;
+        let mut interval = tokio::time::interval(self.options.watch_interval);
+
+        // Fetch once immediately on start
+        {
+            let ctx = crate::Context::new();
+            match self.get_services_by_name(&ctx, name, version).await {
+                Ok(services) => callback(services),
+                Err(e) => log::error!("consul watch error for service {}: {}", name, e),
+            }
+        }
 
         loop {
-            let url = health_url(&self.options, name, version, index.as_deref(), Some(wait));
-            let mut req = self.client.get(&url);
-            if !self.options.token.is_empty() {
-                req = req.header("X-Consul-Token", &self.options.token);
+            interval.tick().await;
+            let ctx = crate::Context::new();
+            match self.get_services_by_name(&ctx, name, version).await {
+                Ok(services) => (&callback)(services),
+                Err(e) => log::error!("consul watch error for service {}: {}", name, e),
             }
-            // Blocking queries may wait up to `wait`; allow extra headroom.
-            req = req.timeout(Duration::from_secs(45));
-
-            match req.send().await {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        let new_index = resp
-                            .headers()
-                            .get("x-consul-index")
-                            .and_then(|v| v.to_str().ok())
-                            .map(String::from);
-
-                        match resp.json::<Vec<HealthEntry>>().await {
-                            Ok(entries) => {
-                                let services = entries_to_services(entries, version);
-                                {
-                                    let mut list = self.service_list.write().await;
-                                    list.insert(name.to_string(), services.clone());
-                                }
-                                callback(services);
-
-                                index = new_index;
-                                continue;
-                            }
-                            Err(e) => {
-                                log::error!("consul watch decode error: {}", e);
-                            }
-                        }
-                    } else {
-                        log::error!("consul watch returned status: {}", resp.status());
-                    }
-                }
-                Err(e) => {
-                    if e.is_timeout() {
-                        // Timeout likely means no change within the wait window.
-                        // Re-fetch with the same index.
-                        continue;
-                    }
-                    log::error!("consul watch request error: {}", e);
-                }
-            }
-
-            // Back off on error before retrying.
-            tokio::time::sleep(Duration::from_secs(3)).await;
         }
     }
 
@@ -162,7 +133,7 @@ impl ConsulDiscovery {
         name: &str,
         version: &str,
     ) -> Result<Vec<Service>> {
-        let url = health_url(&self.options, name, version, None, None);
+        let url = health_url(&self.options, name, version);
         let mut req = self.client.get(&url);
         if !self.options.token.is_empty() {
             req = req.header("X-Consul-Token", &self.options.token);
@@ -177,17 +148,13 @@ impl ConsulDiscovery {
             .map_err(HestiaError::Consul)?;
 
         let entries: Vec<HealthEntry> = resp.json().await.map_err(HestiaError::Consul)?;
-        Ok(entries_to_services(entries, version))
+
+        let prefix = self.options.prefix.clone();
+        Ok(entries_to_services(entries, &prefix))
     }
 }
 
-fn health_url(
-    options: &Options,
-    name: &str,
-    version: &str,
-    index: Option<&str>,
-    wait: Option<&str>,
-) -> String {
+fn health_url(options: &Options, name: &str, version: &str) -> String {
     let mut url = format!("{}/v1/health/service/{}", base_url(options), name);
     let mut params = Vec::new();
     params.push("passing=true".to_string());
@@ -197,12 +164,6 @@ fn health_url(
     if !version.is_empty() {
         params.push(format!("tag=version:{}", version));
     }
-    if let Some(idx) = index {
-        params.push(format!("index={}", idx));
-    }
-    if let Some(w) = wait {
-        params.push(format!("wait={}", w));
-    }
     if !params.is_empty() {
         url.push('?');
         url.push_str(&params.join("&"));
@@ -210,24 +171,45 @@ fn health_url(
     url
 }
 
-fn entries_to_services(entries: Vec<HealthEntry>, version: &str) -> Vec<Service> {
+fn entries_to_services(entries: Vec<HealthEntry>, prefix: &str) -> Vec<Service> {
+    let entries = filter_by_prefix(entries, prefix);
     let mut services = Vec::with_capacity(entries.len());
     for entry in entries {
-        if let Some(svc) = entry_to_service(entry, version) {
+        if let Some(svc) = entry_to_service(entry) {
             services.push(svc);
         }
     }
     services
 }
 
-fn entry_to_service(entry: HealthEntry, version: &str) -> Option<Service> {
-    let service = entry.service;
-    let svc_version = tag_value(&service.tags, "version:").unwrap_or_default();
-
-    if !version.is_empty() && svc_version != version {
-        return None;
+fn filter_by_prefix(entries: Vec<HealthEntry>, prefix: &str) -> Vec<HealthEntry> {
+    if prefix.is_empty() {
+        return entries;
     }
+    let target = format!("prefix:{}", normalize_prefix(prefix));
+    entries
+        .into_iter()
+        .filter(|entry| entry.service.tags.iter().any(|t| t == &target))
+        .collect()
+}
 
+fn entry_to_service(entry: HealthEntry) -> Option<Service> {
+    let service = entry.service;
+
+    // Read fields from tags
+    let prefix = tag_value(&service.tags, "prefix:").unwrap_or_default();
+    let version = tag_value(&service.tags, "version:").unwrap_or_default();
+    let protocol = tag_value(&service.tags, "protocol:")
+        .map(ProtocolType::from)
+        .unwrap_or_default();
+    let instance_id =
+        tag_value(&service.tags, "instance_id:").unwrap_or_else(|| service.id.clone());
+    let network = tag_value(&service.tags, "network:").unwrap_or_else(|| "tcp".to_string());
+    let weight = parse_weight(&service.tags);
+    let created = tag_value(&service.tags, "created:").unwrap_or_default();
+    let naming_address = tag_value(&service.tags, "naming_address:").unwrap_or_default();
+
+    // Node address fallback when service address is empty
     let host = if service.address.is_empty() {
         entry.node.address
     } else {
@@ -235,30 +217,49 @@ fn entry_to_service(entry: HealthEntry, version: &str) -> Option<Service> {
     };
     let address = format!("{}:{}", host, service.port);
 
-    let protocol = tag_value(&service.tags, "protocol:")
-        .map(ProtocolType::from)
-        .unwrap_or_default();
+    // Build metadata from service meta directly
+    let metadata = service
+        .meta
+        .into_iter()
+        .map(|(k, v)| (k, serde_json::Value::String(v)))
+        .collect();
 
-    let instance_id =
-        tag_value(&service.tags, "instance_id:").unwrap_or_else(|| service.id.clone());
+    // Build tags from Consul service tags
+    let mut tags = HashMap::new();
+    tags.insert("prefix".to_string(), prefix.clone());
+    if !version.is_empty() {
+        tags.insert("version".to_string(), version.clone());
+    }
+    let protocol_str: String = protocol.clone().into();
+    if !protocol_str.is_empty() {
+        tags.insert("protocol".to_string(), protocol_str);
+    }
+    if !instance_id.is_empty() {
+        tags.insert("instance_id".to_string(), instance_id.clone());
+    }
+    if !network.is_empty() {
+        tags.insert("network".to_string(), network.clone());
+    }
+    if !created.is_empty() {
+        tags.insert("created".to_string(), created.clone());
+    }
+    if !naming_address.is_empty() {
+        tags.insert("naming_address".to_string(), naming_address.clone());
+    }
 
     Some(Service {
-        network: "tcp".to_string(),
+        network,
         name: service.service,
         address,
-        naming_address: String::new(),
+        naming_address,
         instance_id,
-        version: svc_version,
-        weight: 100,
+        version,
+        weight,
         protocol,
         healthy: true,
-        created: String::new(),
-        metadata: service
-            .meta
-            .into_iter()
-            .map(|(k, v)| (k, serde_json::Value::String(v)))
-            .collect(),
-        tags: HashMap::new(),
+        created,
+        metadata,
+        tags,
     })
 }
 
@@ -266,6 +267,12 @@ fn tag_value(tags: &[String], prefix: &str) -> Option<String> {
     tags.iter()
         .find(|t| t.starts_with(prefix))
         .map(|t| t[prefix.len()..].to_string())
+}
+
+fn parse_weight(tags: &[String]) -> u32 {
+    tag_value(tags, "weight:")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100)
 }
 
 #[derive(Debug, Deserialize)]
@@ -288,13 +295,13 @@ struct ServiceEntry {
     id: String,
     #[serde(rename = "Service")]
     service: String,
-    #[serde(rename = "Tags")]
+    #[serde(rename = "Tags", default)]
     tags: Vec<String>,
     #[serde(rename = "Address")]
     address: String,
     #[serde(rename = "Port")]
     port: u16,
-    #[serde(rename = "Meta")]
+    #[serde(rename = "Meta", default)]
     meta: HashMap<String, String>,
 }
 
@@ -305,12 +312,13 @@ mod tests {
     #[test]
     fn test_health_url() {
         let opt = Options::new(vec!["http://localhost:8500".to_string()]);
-        let url = health_url(&opt, "order", "v1", Some("42"), Some("30s"));
+        let url = health_url(&opt, "order", "v1");
         assert!(url.contains("/v1/health/service/order"));
         assert!(url.contains("passing=true"));
         assert!(url.contains("tag=version:v1"));
-        assert!(url.contains("index=42"));
-        assert!(url.contains("wait=30s"));
+        // No longer includes index/wait params since we use ticker-based polling
+        assert!(!url.contains("index="));
+        assert!(!url.contains("wait="));
     }
 
     #[test]
@@ -319,6 +327,60 @@ mod tests {
         assert_eq!(tag_value(&tags, "version:"), Some("v1".to_string()));
         assert_eq!(tag_value(&tags, "protocol:"), Some("GRPC".to_string()));
         assert_eq!(tag_value(&tags, "missing:"), None);
+    }
+
+    #[test]
+    fn test_parse_weight() {
+        let tags = vec!["weight:200".to_string()];
+        assert_eq!(parse_weight(&tags), 200);
+
+        let tags = vec!["weight:invalid".to_string()];
+        assert_eq!(parse_weight(&tags), 100);
+
+        let tags: Vec<String> = vec![];
+        assert_eq!(parse_weight(&tags), 100);
+    }
+
+    #[test]
+    fn test_filter_by_prefix() {
+        let entries = vec![
+            HealthEntry {
+                node: NodeEntry {
+                    address: "10.0.0.1".to_string(),
+                },
+                service: ServiceEntry {
+                    id: "uuid-1".to_string(),
+                    service: "test".to_string(),
+                    tags: vec![
+                        "version:v1".to_string(),
+                        "prefix:hestia".to_string(),
+                    ],
+                    address: "127.0.0.1".to_string(),
+                    port: 8080,
+                    meta: HashMap::new(),
+                },
+            },
+            HealthEntry {
+                node: NodeEntry {
+                    address: "10.0.0.2".to_string(),
+                },
+                service: ServiceEntry {
+                    id: "uuid-2".to_string(),
+                    service: "test".to_string(),
+                    tags: vec![
+                        "version:v1".to_string(),
+                        "prefix:other".to_string(),
+                    ],
+                    address: "127.0.0.2".to_string(),
+                    port: 8081,
+                    meta: HashMap::new(),
+                },
+            },
+        ];
+
+        let filtered = filter_by_prefix(entries, "hestia");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].service.id, "uuid-1");
     }
 
     #[test]
@@ -331,19 +393,62 @@ mod tests {
                 id: "uuid-1".to_string(),
                 service: "order".to_string(),
                 tags: vec![
+                    "prefix:hestia".to_string(),
                     "version:v1".to_string(),
                     "protocol:GRPC".to_string(),
                     "instance_id:uuid-1".to_string(),
+                    "network:tcp".to_string(),
+                    "weight:200".to_string(),
+                    "created:2024-01-01".to_string(),
+                    "naming_address:order.local.svc".to_string(),
                 ],
                 address: "127.0.0.1".to_string(),
                 port: 8080,
                 meta: HashMap::new(),
             },
         };
-        let svc = entry_to_service(entry, "v1").unwrap();
+        let svc = entry_to_service(entry).unwrap();
         assert_eq!(svc.name, "order");
         assert_eq!(svc.address, "127.0.0.1:8080");
         assert_eq!(svc.version, "v1");
         assert_eq!(svc.protocol, ProtocolType::Grpc);
+        assert_eq!(svc.network, "tcp");
+        assert_eq!(svc.weight, 200);
+        assert_eq!(svc.created, "2024-01-01");
+        assert_eq!(svc.naming_address, "order.local.svc");
+        assert_eq!(svc.instance_id, "uuid-1");
+        assert_eq!(svc.tags.get("prefix"), Some(&"hestia".to_string()));
+        assert_eq!(svc.tags.get("version"), Some(&"v1".to_string()));
+        assert_eq!(svc.tags.get("network"), Some(&"tcp".to_string()));
+        assert_eq!(svc.tags.get("created"), Some(&"2024-01-01".to_string()));
+        assert_eq!(
+            svc.tags.get("naming_address"),
+            Some(&"order.local.svc".to_string())
+        );
+    }
+
+    #[test]
+    fn test_entry_to_service_defaults() {
+        let entry = HealthEntry {
+            node: NodeEntry {
+                address: "10.0.0.1".to_string(),
+            },
+            service: ServiceEntry {
+                id: "uuid-1".to_string(),
+                service: "order".to_string(),
+                tags: vec!["version:v1".to_string(), "protocol:GRPC".to_string()],
+                address: "".to_string(),
+                port: 8080,
+                meta: HashMap::new(),
+            },
+        };
+        let svc = entry_to_service(entry).unwrap();
+        // Node address fallback
+        assert_eq!(svc.address, "10.0.0.1:8080");
+        // Defaults
+        assert_eq!(svc.network, "tcp");
+        assert_eq!(svc.weight, 100);
+        assert_eq!(svc.created, "");
+        assert_eq!(svc.naming_address, "");
     }
 }

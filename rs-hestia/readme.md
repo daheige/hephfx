@@ -25,14 +25,14 @@
 - **接口化设计**：定义 `Registry` 和 `Discovery` trait，便于扩展不同的注册中心实现。
 - **多注册中心支持**：
   - **etcd 实现**：基于 `etcd-client` 实现服务注册与发现，利用 etcd lease 机制实现自动过期与心跳保活。
-  - **Consul 实现**：基于 `reqwest` 调用 HashiCorp Consul HTTP API，通过 TTL health check 保活，并支持 blocking-query watch。
+  - **Consul 实现**：基于 `reqwest` 调用 HashiCorp Consul HTTP API，通过 TTL health check 保活，并支持定期轮询 watch。
 - **服务元数据**：`Service` 支持 `network`、`name`、`address`、`naming_address`、`version`、`weight`、`protocol`、`healthy`、`created`、`metadata`、`tags` 等字段。
 - **版本隔离**：支持按 `version` 注册和发现服务，便于多版本共存。
 - **地址自动解析**：`resolve` 可将空 host（如 `:port`）或 `::` 解析为本机 IPv4 地址。
 - **负载均衡策略**：内置轮询策略 `round_robin_handler`，发现端支持传入自定义 `StrategyHandler`。
 - **watch 监听**：
   - etcd 实现可选启用 etcd watch 实时感知服务上下线变化（默认关闭，通过 `with_enable_watched()` 开启）。
-  - Consul 实现可选启用 blocking-query watch 实时刷新本地缓存（默认关闭，通过 `with_enable_watch()` 开启）。
+  - Consul 实现可选启用定期轮询 watch 实时刷新本地缓存（默认关闭，通过 `with_enable_watch()` 开启）。
 - **认证支持**：
   - etcd 实现支持通过用户名/密码连接注册中心。
   - Consul 实现支持通过 ACL token 进行认证。
@@ -58,7 +58,7 @@ flowchart TB
 
         subgraph ConsulImpl["consul 实现"]
             ConsulRegistry["ConsulRegistry\nregister / deregister / TTL check"]
-            ConsulDiscovery["ConsulDiscovery\nget_services / get / blocking-query watch"]
+            ConsulDiscovery["ConsulDiscovery\nget_services / get / 定期轮询 watch"]
             ConsulResolver["ConsulResolverBuilder / tonic Channel\nconsul:///service/version"]
         end
     end
@@ -118,8 +118,9 @@ Consul 实现通过 HTTP API 与 agent 交互：
 
 - 注册：调用 `/v1/agent/service/register`，将 `Service` 映射为 Consul service 定义，并附带 TTL health check。
 - 发现：调用 `/v1/health/service/{name}`，过滤出健康实例后反序列化为 `Service`。
-- `version` 通过 Consul tags 传递，格式为 `{prefix}/{version}`；空版本时仅保留 prefix。
-- 默认 prefix 为 `/hestia/registry-consul`，主要用于 tag 约定，不作为 KV 前缀。
+- `version` 通过 Consul tags 传递（格式 `version:<value>`），发现时通过 Health API `tag` 参数过滤。
+- `prefix` 通过 Consul tags 传递（格式 `prefix:<value>`），发现时客户端侧 `filter_by_prefix` 过滤，实现 namespace 隔离。
+- 默认 prefix 为 `/hestia/registry-consul`。
 
 ## 快速开始
 
@@ -571,7 +572,7 @@ async fn main() -> rs_hestia::Result<()> {
 
     let discovery = new_discovery(
         Options::new(vec!["http://127.0.0.1:8500".to_string()])
-            .with_enable_watch(), // 可选：开启 blocking-query watch 实时刷新
+            .with_enable_watch(), // 可选：开启定期轮询 watch 实时刷新
     ).await?;
 
     let services = discovery.get_services(&ctx, "order-service", "v1").await?;
@@ -613,7 +614,7 @@ async fn main() -> rs_hestia::Result<()> {
 - `consul:///order_service/v1`：服务名 `order_service`，版本 `v1`。
 - `consul:///order_service`：服务名 `order_service`，版本为空。
 - resolver 仅使用 `protocol` 为 `Grpc` 的实例，其他协议会被过滤。
-- 若 discovery 是 `ConsulDiscovery`，resolver 会复用 blocking-query watch 感知变更；否则退化为 10 秒轮询。
+- 若 discovery 是 `ConsulDiscovery`，resolver 会复用定期轮询 watch 感知变更；否则退化为 10 秒轮询。
 
 ## Kubernetes 使用方式
 

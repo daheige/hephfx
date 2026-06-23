@@ -16,6 +16,7 @@ type Options struct {
 	datacenter                     string        // consul datacenter
 	validateAddress                bool          // 是否校验address有效性，default:false
 	disableWatch                   bool          // 是否禁用watch，default:true
+	watchInterval                  time.Duration // watch轮询间隔，默认30s
 }
 
 // Option consul functional option
@@ -71,10 +72,19 @@ func WithValidateAddress(validate bool) Option {
 	}
 }
 
-// WithEnableWatched enable consul watch (blocking query)
+// WithEnableWatched enable consul watch (periodic polling)
 func WithEnableWatched() Option {
 	return func(o *Options) {
 		o.disableWatch = false
+	}
+}
+
+// WithWatchInterval set watch polling interval
+func WithWatchInterval(d time.Duration) Option {
+	return func(o *Options) {
+		if d > 0 {
+			o.watchInterval = d
+		}
 	}
 }
 

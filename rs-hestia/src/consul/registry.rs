@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Serialize;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -20,7 +20,7 @@ use super::{Options, base_url, new_http_client, normalize_prefix};
 pub struct ConsulRegistry {
     client: reqwest::Client,
     options: Options,
-    keepalive_handle: Mutex<Option<JoinHandle<()>>>,
+    keepalive_handle: Mutex<Option<(JoinHandle<()>, Arc<Notify>)>>,
 }
 
 /// Creates a new Consul-backed registry.
@@ -62,7 +62,10 @@ impl Registry for ConsulRegistry {
                 check_id: check_id.clone(),
                 name: format!("{} TTL check", service.name),
                 ttl: format!("{}s", self.options.health_check_ttl),
-                deregister_critical_service_after: "1m".to_string(),
+                deregister_critical_service_after: self
+                    .options
+                    .deregister_critical_service_after
+                    .clone(),
             }),
         };
 
@@ -86,7 +89,8 @@ impl Registry for ConsulRegistry {
 
         {
             let mut handle = self.keepalive_handle.lock().await;
-            if let Some(h) = handle.take() {
+            if let Some((h, shutdown)) = handle.take() {
+                shutdown.notify_one();
                 h.abort();
             }
 
@@ -94,11 +98,18 @@ impl Registry for ConsulRegistry {
             let token = self.options.token.clone();
             let base = base_url(&self.options);
             let ttl = self.options.health_check_ttl;
-            *handle = Some(tokio::spawn(async move {
-                if let Err(e) = keepalive(client, &base, &token, &check_id, ttl).await {
-                    log::error!("consul keepalive failed: {}", e);
-                }
-            }));
+            let shutdown = Arc::new(Notify::new());
+            let shutdown_clone = Arc::clone(&shutdown);
+            *handle = Some((
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        keepalive(client, &base, &token, &check_id, ttl, shutdown).await
+                    {
+                        log::error!("consul keepalive failed: {}", e);
+                    }
+                }),
+                shutdown_clone,
+            ));
         }
 
         Ok(())
@@ -109,8 +120,40 @@ impl Registry for ConsulRegistry {
             return Err(HestiaError::MissingServiceName);
         }
 
-        let _ = parse_host_port(&service.address)?;
+        {
+            let mut handle = self.keepalive_handle.lock().await;
+            if let Some((h, shutdown)) = handle.take() {
+                shutdown.notify_one();
+                h.abort();
+            }
+        }
 
+        // Deregister the check first, then the service.
+        let check_id = format!("service:{}", service.instance_id);
+        let check_url = format!(
+            "{}/v1/agent/check/deregister/{}",
+            base_url(&self.options),
+            check_id
+        );
+        let mut req = self.client.put(&check_url);
+        if !self.options.token.is_empty() {
+            req = req.header("X-Consul-Token", &self.options.token);
+        }
+        match tokio::time::timeout(self.options.dial_timeout, req.send()).await {
+            Ok(Ok(resp)) => {
+                if let Err(e) = resp.error_for_status() {
+                    log::warn!("deregister consul check {} warning: {}", check_id, e);
+                }
+            }
+            Ok(Err(e)) => {
+                log::warn!("deregister consul check {} error: {}", check_id, e);
+            }
+            Err(_) => {
+                log::warn!("deregister consul check {} timeout", check_id);
+            }
+        }
+
+        // Deregister the service
         let url = format!(
             "{}/v1/agent/service/deregister/{}",
             base_url(&self.options),
@@ -126,14 +169,13 @@ impl Registry for ConsulRegistry {
             .error_for_status()
             .map_err(HestiaError::Consul)?;
 
-        {
-            let mut handle = self.keepalive_handle.lock().await;
-            if let Some(h) = handle.take() {
-                h.abort();
-            }
-        }
-
         service.healthy = false;
+        log::info!(
+            "deregister consul service:{} version:{} instance_id:{} success",
+            service.name,
+            service.version,
+            service.instance_id
+        );
         Ok(())
     }
 
@@ -178,30 +220,45 @@ async fn keepalive(
     token: &str,
     check_id: &str,
     ttl: u64,
+    shutdown: Arc<Notify>,
 ) -> Result<()> {
-    let url = format!("{}/v1/agent/check/pass/{}", base, check_id);
+    let pass_url = format!("{}/v1/agent/check/pass/{}", base, check_id);
+    let fail_url = format!("{}/v1/agent/check/fail/{}", base, check_id);
     let interval_secs = (ttl / 2).max(1);
     let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
 
     loop {
-        interval.tick().await;
-        let mut req = client.put(&url);
-        if !token.is_empty() {
-            req = req.header("X-Consul-Token", token);
-        }
-        match req.send().await {
-            Ok(resp) => {
-                if let Err(e) = resp.error_for_status() {
-                    log::error!("consul keepalive error: {}", e);
+        tokio::select! {
+            _ = shutdown.notified() => {
+                // Best-effort: mark check as failing on shutdown
+                let mut req = client.put(&fail_url);
+                if !token.is_empty() {
+                    req = req.header("X-Consul-Token", token);
+                }
+                let _ = req.send().await;
+                log::info!("consul keepalive stopped check_id:{}", check_id);
+                return Ok(());
+            }
+            _ = interval.tick() => {
+                let mut req = client.put(&pass_url);
+                if !token.is_empty() {
+                    req = req.header("X-Consul-Token", token);
+                }
+                match req.send().await {
+                    Ok(resp) => {
+                        if let Err(e) = resp.error_for_status() {
+                            log::error!("consul keepalive error: {}", e);
+                        }
+                    }
+                    Err(e) => log::error!("consul keepalive request error: {}", e),
                 }
             }
-            Err(e) => log::error!("consul keepalive request error: {}", e),
         }
     }
 }
 
 fn build_tags(service: &Service, prefix: &str) -> Vec<String> {
-    let mut tags = Vec::with_capacity(4);
+    let mut tags = Vec::with_capacity(8);
     if !prefix.is_empty() {
         tags.push(format!("prefix:{}", normalize_prefix(prefix)));
     }
@@ -211,6 +268,16 @@ fn build_tags(service: &Service, prefix: &str) -> Vec<String> {
     let protocol: ProtocolType = service.protocol.clone();
     tags.push(format!("protocol:{}", String::from(protocol)));
     tags.push(format!("instance_id:{}", service.instance_id));
+    if !service.network.is_empty() {
+        tags.push(format!("network:{}", service.network));
+    }
+    tags.push(format!("weight:{}", service.weight));
+    if !service.created.is_empty() {
+        tags.push(format!("created:{}", service.created));
+    }
+    if !service.naming_address.is_empty() {
+        tags.push(format!("naming_address:{}", service.naming_address));
+    }
     tags
 }
 
@@ -258,10 +325,14 @@ mod tests {
             version: "v1".to_string(),
             instance_id: "uuid-1".to_string(),
             protocol: ProtocolType::Grpc,
+            weight: 100,
             ..Default::default()
         };
         let tags = build_tags(&service, "hestia");
         assert!(tags.iter().any(|t| t == "version:v1"));
         assert!(tags.iter().any(|t| t == "protocol:GRPC"));
+        assert!(tags.iter().any(|t| t == "weight:100"));
+        assert!(tags.iter().any(|t| t == "instance_id:uuid-1"));
+        assert!(tags.iter().any(|t| t == "prefix:hestia"));
     }
 }

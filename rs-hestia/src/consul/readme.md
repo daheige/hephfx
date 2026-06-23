@@ -18,7 +18,7 @@
 - **接口化设计**：实现 `Registry` 和 `Discovery` trait，与 etcd 实现共享同一套抽象。
 - **Consul 服务注册**：通过 Consul Agent API `/v1/agent/service/register` 注册实例，绑定 TTL 健康检查，后台自动 `check/pass` 保活。
 - **Consul 服务发现**：通过 `/v1/health/service/{name}?passing=true` 查询健康实例，支持按 `version` tag 过滤。
-- **watch 监听**：可选启用 Consul blocking-query 长轮询，本地缓存实时刷新（默认关闭）。
+- **watch 监听**：可选启用定期轮询，通过 `tokio::time::interval` 周期刷新本地缓存（默认关闭，间隔 30s）。
 - **版本隔离**：`version` 作为 Consul Tag 存储（`version:v1`），发现时支持多版本共存。
 - **协议识别**：`protocol` 作为 Tag 存储（`protocol:GRPC`），gRPC resolver 仅选取 `Grpc` 协议实例。
 - **gRPC Resolver**：提供 `consul:///service/version` target，直接构建 tonic `Channel`。
@@ -38,7 +38,7 @@ flowchart TB
 
     subgraph Impl["hestia/consul 实现层"]
         ConsulRegistry["ConsulRegistry\nregister / deregister / TTL keepalive"]
-        ConsulDiscovery["ConsulDiscovery\nget_services / get / blocking-query watch"]
+        ConsulDiscovery["ConsulDiscovery\nget_services / get / 定期轮询 watch (prefix 过滤)"]
         ConsulResolver["ConsulResolverBuilder / tonic Channel\ngRPC resolver"]
     end
 
@@ -56,7 +56,7 @@ flowchart TB
 - `ID` -> `Service.instance_id`（为空时自动生成 UUID）
 - `Name` -> `Service.name`
 - `Address` / `Port` -> 从 `Service.address` 解析出的 host 与 port
-- `Tags` -> 包含 `prefix`、`version`、`protocol`、`instance_id` 的键值对标签
+- `Tags` -> 包含 `prefix`、`version`、`protocol`、`instance_id`、`network`、`weight`、`created`、`naming_address` 的键值对标签
 - `Meta` -> `Service.metadata` 的字符串化键值对
 - `Check` -> TTL 健康检查，`CheckID` 为 `service:{instance_id}`
 
@@ -161,7 +161,9 @@ let registry = new_registry(
         .with_prefix("/myapp/registry")
         .with_token("my-acl-token")
         .with_datacenter("dc1")
-        .with_validate_address(true),
+        .with_validate_address(true)
+        .with_watch_interval(Duration::from_secs(30))
+        .with_deregister_critical_service_after("1m"),
 ).await?;
 ```
 
@@ -201,14 +203,16 @@ async fn main() -> rs_hestia::Result<()> {
 
 ### 启用 watch 监听
 
-默认 `disable_watch = true`，每次 `get_services` 都会直接查询 Consul。开启后首次查询写入本地缓存，并启动 blocking-query 长轮询实时刷新：
+默认 `disable_watch = true`，每次 `get_services` 都会直接查询 Consul。开启后首次查询写入本地缓存，并启动 `tokio::time::interval` 定期轮询刷新（默认间隔 30s）：
 
 ```rust
+use std::time::Duration;
 use rs_hestia::consul::{Options, new_discovery};
 
 let discovery = new_discovery(
     Options::new(vec!["http://127.0.0.1:8500".to_string()])
-        .with_enable_watch(),
+        .with_enable_watch()
+        .with_watch_interval(Duration::from_secs(30)),
 ).await?;
 ```
 
@@ -241,7 +245,7 @@ async fn main() -> rs_hestia::Result<()> {
 - `consul:///order_service/v1`：服务名 `order_service`，版本 `v1`。
 - `consul:///order_service`：服务名 `order_service`，版本为空。
 - resolver 仅使用 `protocol` 为 `ProtocolType::Grpc` 的服务实例；其他协议会被过滤。
-- resolver 内部优先复用 `ConsulDiscovery` 的 blocking-query watch 能力感知变更；若传入的 discovery 不是 consul 实现，则退化为 10 秒轮询。
+- resolver 内部优先复用 `ConsulDiscovery` 的 `watch_with_callback` 能力通过定期轮询感知变更（含 prefix 过滤）；若传入的 discovery 不是 consul 实现，则退化为 10 秒轮询。
 
 ## Consul 部署方式
 
@@ -456,16 +460,17 @@ cargo test --test consul_integration test_register -- --ignored
 
 1. **Rust 版本**：`Cargo.toml` 使用 `edition = "2024"`，要求 Rust >= 1.85.0。
 2. **Consul 版本**：基于 Consul HTTP API v1 实现，建议 Consul >= 1.x。
-3. **watch 默认关闭**：默认 `disable_watch = true`。生产环境如需实时感知服务变化，建议通过 `with_enable_watch()` 开启。
-4. **服务注销**：`deregister` 会中止 keepalive 任务，并从 Consul 删除服务实例。
-5. **健康检查**：注册时自动创建 TTL 检查，后台按 `ttl / 2` 的频率调用 `check/pass`。若实例停止保活，Consul 会在 TTL 到期后将实例标记为不健康，默认 1 分钟后自动注销。
+3. **watch 默认关闭**：默认 `disable_watch = true`。开启后首次查询写入本地缓存，并启动 `tokio::time::interval` 定期轮询刷新（默认间隔 30s，通过 `with_watch_interval` 调整）。生产环境如需实时感知服务变化，建议通过 `with_enable_watch()` 开启。
+4. **服务注销**：`deregister` 会先通过 `Arc<Notify>` 通知 keepalive 任务优雅退出，再依次注销 Consul check 和 service 实例。
+5. **健康检查**：注册时自动创建 TTL 检查，后台按 `ttl / 2` 的频率调用 `check/pass`，通过 `tokio::select!` 在 interval tick 和 shutdown 信号间选择。若实例停止保活，Consul 会在 TTL 到期后将实例标记为不健康，默认 `1m` 后自动注销（通过 `with_deregister_critical_service_after` 配置）。
 6. **地址解析**：注册时 `address` 为空 host（如 `:8080`）时，需开启 `with_validate_address(true)` 才会自动解析为本机第一个非回环 IPv4 地址。K8s 生产环境建议通过 Downward API 显式注入 Pod IP。
-7. **prefix 格式**：`with_prefix` 传入的值前后 `/` 不影响最终效果，实现层会自动规范。
+7. **prefix 格式**：`with_prefix` 传入的值前后 `/` 不影响最终效果，实现层会自动规范。注册时写入 `prefix:<value>` tag，发现时通过 `filter_by_prefix` 过滤，确保只有同一 prefix 下的服务可见。
 8. **并发安全**：`ConsulDiscovery` 内部使用读写锁保护服务列表缓存，可安全并发调用 `get_services` 和 `get`。
 9. **错误处理**：当目标服务没有任何可用实例时，`get_services` 会返回 `HestiaError::ServicesNotFound`。
 10. **字段默认值**：注册时若 `weight` 为 0，会自动设置为 100；`healthy` 在注册成功后为 `true`，注销后为 `false`。
 11. **协议类型**：`protocol` 支持 `Grpc`、`Http`、`Unspecified` 和任意协议字符串。gRPC resolver 仅将 `Grpc` 纳入地址列表。
 12. **gRPC resolver 空列表**：服务暂时不存在时，resolver 不会直接失败，而是返回空地址列表并持续监听；待服务注册后会自动更新。
+13. **version 过滤**：发现时通过 Consul Health API 的 `tag=version:<value>` 参数过滤，无需客户端侧二次过滤。
 
 ## 许可证
 
