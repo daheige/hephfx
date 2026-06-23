@@ -284,7 +284,13 @@ fn build_tags(service: &Service, prefix: &str) -> Vec<String> {
 fn flatten_metadata(metadata: &HashMap<String, serde_json::Value>) -> HashMap<String, String> {
     metadata
         .iter()
-        .map(|(k, v)| (k.clone(), v.to_string()))
+        .map(|(k, v)| {
+            let val = match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            (k.clone(), val)
+        })
         .collect()
 }
 

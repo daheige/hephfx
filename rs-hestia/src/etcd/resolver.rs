@@ -161,7 +161,7 @@ async fn apply_services(
 ) -> Result<()> {
     let mut new_keys = HashSet::with_capacity(services.len());
     for s in services {
-        if s.protocol != ProtocolType::Grpc {
+        if s.protocol != ProtocolType::Unspecified && s.protocol != ProtocolType::Grpc {
             continue;
         }
 

@@ -149,7 +149,7 @@ docker run -d --name etcd \
 
 ```toml
 [dependencies]
-rs-hestia = "0.1.6"
+rs-hestia = "0.1.7"
 ```
 
 或直接使用 git 依赖：
@@ -158,7 +158,7 @@ rs-hestia = "0.1.6"
 [dependencies]
 rs-hestia = { git = "https://github.com/daheige/hephfx.git", branch = "main" }
 ```
-或者指定tag为v0.1.6
+或者指定tag为v0.1.7
 ## 核心模块和用法
 
 ### Service 结构体
@@ -510,7 +510,7 @@ async fn main() -> rs_hestia::Result<()> {
 
 - `etcd:///order_service/v1`：服务名 `order_service`，版本 `v1`。
 - `etcd:///order_service`：服务名 `order_service`，版本为空。
-- resolver 仅使用 `protocol` 为 `ProtocolType::Grpc` 的服务实例；`Unspecified`、`Http`、`Other` 等均不会被纳入 gRPC 地址列表。
+- resolver 使用 `protocol` 为 `ProtocolType::Unspecified`（空协议）或 `ProtocolType::Grpc` 的服务实例；`Http`、`Other` 等不会被纳入 gRPC 地址列表。
 - resolver 内部优先复用 `EtcdDiscovery` 的 watch 能力感知变更；若传入的 discovery 不是 etcd 实现，则退化为 10 秒轮询。
 
 ## consul实现服务注册和发现
@@ -613,7 +613,7 @@ async fn main() -> rs_hestia::Result<()> {
 
 - `consul:///order_service/v1`：服务名 `order_service`，版本 `v1`。
 - `consul:///order_service`：服务名 `order_service`，版本为空。
-- resolver 仅使用 `protocol` 为 `Grpc` 的实例，其他协议会被过滤。
+- resolver 使用 `protocol` 为 `Unspecified`（空协议）或 `Grpc` 的实例，其他协议会被过滤。
 - 若 discovery 是 `ConsulDiscovery`，resolver 会复用定期轮询 watch 感知变更；否则退化为 10 秒轮询。
 
 ## Kubernetes 使用方式
@@ -759,7 +759,7 @@ RUST_LOG=info cargo test --test etcd_integration test_registry -- --ignored --no
 8. **并发安全**：`EtcdDiscovery` 内部使用读写锁保护服务列表缓存，可安全并发调用 `get_services` 和 `get`。
 9. **错误处理**：当目标服务没有任何可用实例时，`get_services` 会返回 `HestiaError::ServicesNotFound`。
 10. **字段默认值**：注册时若 `weight` 为 0，会自动默认设置为 100；`healthy` 在注册成功后为 `true`，注销后为 `false`。
-11. **协议类型**：`protocol` 支持 `ProtocolType::Grpc`、`ProtocolType::Http`、`ProtocolType::Unspecified` 和任意协议字符串（如 `ProtocolType::Other("WEBSOCKET".to_string())`）。空字符串反序列化为 `Unspecified`。gRPC resolver 仅将 `Grpc` 纳入地址列表，`Unspecified`、`Http` 和 `Other` 均会被过滤。
+11. **协议类型**：`protocol` 支持 `ProtocolType::Grpc`、`ProtocolType::Http`、`ProtocolType::Unspecified` 和任意协议字符串（如 `ProtocolType::Other("WEBSOCKET".to_string())`）。空字符串反序列化为 `Unspecified`。gRPC resolver 将 `Unspecified`（空协议）或 `Grpc` 纳入地址列表，`Http` 和 `Other` 会被过滤。
 12. **gRPC resolver 空列表**：服务暂时不存在时，resolver 不会直接失败，而是返回空地址列表并持续监听；待服务注册后会自动更新。
 
 ## 许可证

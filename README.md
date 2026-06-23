@@ -442,13 +442,13 @@ stack := gutils.CatchStack()
 ```
 ## rs-hestia（rust语言实现）
 
-`rs-hestia` 已发布到 crates.io，版本号跟随 `Cargo.toml` 定义（当前 `0.1.6`）。在 Rust 项目中使用时，只需在 `Cargo.toml` 中添加依赖，即可通过 `Registry` 注册服务、`Discovery` 发现服务、`EtcdResolver` 构建 tonic gRPC 通道。
+`rs-hestia` 已发布到 crates.io，版本号跟随 `Cargo.toml` 定义（当前 `0.1.7`）。在 Rust 项目中使用时，只需在 `Cargo.toml` 中添加依赖，即可通过 `Registry` 注册服务、`Discovery` 发现服务、`EtcdResolver` 构建 tonic gRPC 通道。
 
 ### 依赖引入
 
 ```toml
 [dependencies]
-rs-hestia = "0.1.6"
+rs-hestia = "0.1.7"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -585,7 +585,7 @@ async fn main() -> rs_hestia::Result<()> {
 
 ### gRPC 客户端使用
 
-`rs-hestia` 提供了 tonic gRPC resolver。客户端可以通过 `etcd:///service/version` 形式的 target 直接构建 `Channel`。resolver 只会选取 `protocol` 为 `Grpc` 的实例，其他协议会被过滤。
+`rs-hestia` 提供了 tonic gRPC resolver。客户端可以通过 `etcd:///service/version` 形式的 target 直接构建 `Channel`。resolver 选取 `protocol` 为 `Unspecified`（空协议）或 `Grpc` 的实例，其他协议会被过滤。
 
 ```rust
 use rs_hestia::etcd::{Options, new_discovery, build_channel};
@@ -755,7 +755,7 @@ async fn main() -> rs_hestia::Result<()> {
 
 - `consul:///order_service/v1`：服务名 `order_service`，版本 `v1`。
 - `consul:///order_service`：服务名 `order_service`，版本为空。
-- resolver 仅选取 `protocol` 为 `Grpc` 的实例，其他协议会被过滤。
+- resolver 选取 `protocol` 为 `Unspecified`（空协议）或 `Grpc` 的实例，其他协议会被过滤。
 - 若传入的 discovery 是 `ConsulDiscovery`，resolver 会复用其定期轮询 watch 能力；否则退化为 10 秒轮询。
 
 #### 更多文档

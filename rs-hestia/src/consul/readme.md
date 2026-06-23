@@ -20,7 +20,7 @@
 - **Consul 服务发现**：通过 `/v1/health/service/{name}?passing=true` 查询健康实例，支持按 `version` tag 过滤。
 - **watch 监听**：可选启用定期轮询，通过 `tokio::time::interval` 周期刷新本地缓存（默认关闭，间隔 30s）。
 - **版本隔离**：`version` 作为 Consul Tag 存储（`version:v1`），发现时支持多版本共存。
-- **协议识别**：`protocol` 作为 Tag 存储（`protocol:GRPC`），gRPC resolver 仅选取 `Grpc` 协议实例。
+- **协议识别**：`protocol` 作为 Tag 存储（`protocol:GRPC`），gRPC resolver 选取 `Unspecified`（空协议）或 `Grpc` 协议实例。
 - **gRPC Resolver**：提供 `consul:///service/version` target，直接构建 tonic `Channel`。
 - **ACL 支持**：可通过 `Options::with_token` 传入 Consul ACL token。
 - **地址自动解析**：注册时若 `validate_address` 开启，空 host 地址会被解析为本机 IPv4。
@@ -86,7 +86,7 @@ docker run -d --name consul \
 
 ```toml
 [dependencies]
-rs-hestia = "0.1.3"
+rs-hestia = "0.1.7"
 ```
 
 ## 核心模块和用法
@@ -244,7 +244,7 @@ async fn main() -> rs_hestia::Result<()> {
 
 - `consul:///order_service/v1`：服务名 `order_service`，版本 `v1`。
 - `consul:///order_service`：服务名 `order_service`，版本为空。
-- resolver 仅使用 `protocol` 为 `ProtocolType::Grpc` 的服务实例；其他协议会被过滤。
+- resolver 使用 `protocol` 为 `ProtocolType::Unspecified`（空协议）或 `ProtocolType::Grpc` 的服务实例；`Http`、`Other` 等会被过滤。
 - resolver 内部优先复用 `ConsulDiscovery` 的 `watch_with_callback` 能力通过定期轮询感知变更（含 prefix 过滤）；若传入的 discovery 不是 consul 实现，则退化为 10 秒轮询。
 
 ## Consul 部署方式
@@ -468,7 +468,7 @@ cargo test --test consul_integration test_register -- --ignored
 8. **并发安全**：`ConsulDiscovery` 内部使用读写锁保护服务列表缓存，可安全并发调用 `get_services` 和 `get`。
 9. **错误处理**：当目标服务没有任何可用实例时，`get_services` 会返回 `HestiaError::ServicesNotFound`。
 10. **字段默认值**：注册时若 `weight` 为 0，会自动设置为 100；`healthy` 在注册成功后为 `true`，注销后为 `false`。
-11. **协议类型**：`protocol` 支持 `Grpc`、`Http`、`Unspecified` 和任意协议字符串。gRPC resolver 仅将 `Grpc` 纳入地址列表。
+11. **协议类型**：`protocol` 支持 `Grpc`、`Http`、`Unspecified` 和任意协议字符串。gRPC resolver 将 `Unspecified`（空协议）或 `Grpc` 纳入地址列表。
 12. **gRPC resolver 空列表**：服务暂时不存在时，resolver 不会直接失败，而是返回空地址列表并持续监听；待服务注册后会自动更新。
 13. **version 过滤**：发现时通过 Consul Health API 的 `tag=version:<value>` 参数过滤，无需客户端侧二次过滤。
 

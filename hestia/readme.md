@@ -577,7 +577,7 @@ resolver.Register(builder)
 
 - `consul:///order_service/v1`：服务名 `order_service`，版本 `v1`
 - `consul:///order_service`：服务名 `order_service`，版本为空
-- resolver 仅将 `hestia.ProtocolGRPC` 的实例纳入地址列表
+- resolver 仅将 `Protocol` 为空或 `hestia.ProtocolGRPC` 的实例纳入地址列表
 - 当传入的 discovery 是 `*consulDiscovery` 时，resolver 直接复用其 `watchWithCallback` 能力通过 Ticker 定期轮询感知变更（含 prefix 过滤）；否则退化为 10 秒轮询
 - 服务暂时不存在时不会报错，返回空地址列表并持续监听，服务注册后自动更新
 
@@ -730,7 +730,7 @@ spec:
 4. **并发安全**：etcd 和 Consul 的 Discovery 实现内部均使用读写锁保护服务列表缓存，可安全并发调用 `GetServices` 和 `Get`。
 5. **错误处理**：当目标服务没有任何可用实例时，`GetServices` 返回 `hestia.ErrServicesNotFound`。
 6. **字段默认值**：注册时若 `Weight` 为 0，自动设置为 100；`Healthy` 在注册成功后为 `true`，注销后为 `false`；`InstanceID` 为空时自动生成 UUID。
-7. **协议类型**：`Protocol` 支持 `hestia.ProtocolGRPC` 和 `hestia.ProtocolHTTP`，gRPC resolver 会自动过滤掉非 GRPC 的实例。
+7. **协议类型**：`Protocol` 支持 `hestia.ProtocolGRPC` 和 `hestia.ProtocolHTTP`，gRPC resolver 仅纳入 `Protocol` 为空或 `hestia.ProtocolGRPC` 的实例。
 8. **gRPC resolver 空列表**：服务暂时不存在时，resolver 不会直接失败，而是返回空地址列表并持续监听；待服务注册后会自动更新。
 9. **接口兼容**：etcd 和 Consul 实现均遵循 `hestia.Registry` 和 `hestia.Discovery` 接口，业务代码切换注册中心无需修改，仅需替换 import 路径和配置参数。
 
