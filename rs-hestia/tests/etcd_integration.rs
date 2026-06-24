@@ -160,13 +160,13 @@ async fn test_registry() {
     let ctx = Context::new();
     let registry = new_registry(
         Options::new(vec!["http://127.0.0.1:12379".to_string()])
-            .with_prefix("/services".to_string()),
+            .with_prefix("/hestia/registry-etcd".to_string()),
     )
     .await
     .expect("create registry");
 
     let mut svc = Service {
-        name: "resolver-test".to_string(),
+        name: "my-test".to_string(),
         address: "127.0.0.1:18082".to_string(),
         version: "v1".to_string(),
         protocol: rs_hestia::ProtocolType::Grpc,
@@ -185,4 +185,19 @@ async fn test_registry() {
         .deregister(&ctx, &mut svc)
         .await
         .expect("deregister service");
+}
+
+#[tokio::test]
+#[ignore = "requires local etcd on 127.0.0.1:12379"]
+async fn test_discovery() {
+    init_logger();
+    let ctx = Context::new();
+    let discovery = new_discovery(Options::new(endpoints()))
+        .await
+        .expect("create discovery");
+    let services = discovery
+        .get_services(&ctx, "my-test", "v1")
+        .await
+        .expect("get services");
+    println!("services: {:#?}", services);
 }

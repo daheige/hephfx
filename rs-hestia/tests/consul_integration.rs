@@ -237,7 +237,7 @@ async fn test_registry() {
     let ctx = Context::new();
     let registry = new_registry(
         Options::new(vec!["http://127.0.0.1:8500".to_string()])
-            .with_prefix("/services".to_string()),
+            .with_prefix("/hestia/registry-consul".to_string()),
     )
     .await
     .expect("create registry");
@@ -262,4 +262,19 @@ async fn test_registry() {
         .deregister(&ctx, &mut svc)
         .await
         .expect("deregister service");
+}
+
+#[tokio::test]
+#[ignore = "requires local consul on 127.0.0.1:8500"]
+async fn test_discovery_from_go(){
+    init_logger();
+    let ctx = Context::new();
+    let discovery = new_discovery(Options::new(endpoints()))
+        .await
+        .expect("create discovery");
+    let services = discovery
+        .get_services(&ctx, "my-test", "v1")
+        .await
+        .expect("get services");
+    println!("{:#?}", services);
 }

@@ -36,7 +36,7 @@ func NewRegistry(endpoints []string, opts ...Option) (hestia.Registry, error) {
 	opt := &Options{
 		endpoints:   endpoints,
 		dialTimeout: 5 * time.Second,
-		prefix:      "hestia/registry-etcd",
+		prefix:      "/hestia/registry-etcd",
 		leaseTTL:    60,
 	}
 
@@ -82,6 +82,14 @@ func (e *etcdRegistry) Register(ctx context.Context, s *hestia.Service) error {
 	if s.Weight == 0 {
 		s.Weight = 100
 	}
+
+	if s.Metadata == nil {
+		s.Metadata = make(map[string]interface{})
+	}
+	if s.Tags == nil {
+		s.Tags = make(map[string]string)
+	}
+
 	s.Healthy = true
 	leaseID, err := grantLease(e.client, e.leaseTTL)
 	if err != nil {

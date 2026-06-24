@@ -73,6 +73,4 @@ func TestDiscovery(t *testing.T) {
 
 	b, _ := json.Marshal(services)
 	log.Printf("services: %v", string(b))
-
-	time.Sleep(60 * time.Second)
 }

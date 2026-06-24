@@ -220,6 +220,7 @@ fn entry_to_service(entry: HealthEntry) -> Option<Service> {
     // Build metadata from service meta directly
     let metadata = service
         .meta
+        .unwrap_or_default()
         .into_iter()
         .map(|(k, v)| (k, serde_json::Value::String(v)))
         .collect();
@@ -302,7 +303,7 @@ struct ServiceEntry {
     #[serde(rename = "Port")]
     port: u16,
     #[serde(rename = "Meta", default)]
-    meta: HashMap<String, String>,
+    meta: Option<HashMap<String, String>>,
 }
 
 #[cfg(test)]
@@ -357,7 +358,7 @@ mod tests {
                     ],
                     address: "127.0.0.1".to_string(),
                     port: 8080,
-                    meta: HashMap::new(),
+                    meta: Some(HashMap::new()),
                 },
             },
             HealthEntry {
@@ -373,7 +374,7 @@ mod tests {
                     ],
                     address: "127.0.0.2".to_string(),
                     port: 8081,
-                    meta: HashMap::new(),
+                    meta: Some(HashMap::new()),
                 },
             },
         ];
@@ -404,7 +405,7 @@ mod tests {
                 ],
                 address: "127.0.0.1".to_string(),
                 port: 8080,
-                meta: HashMap::new(),
+                meta: Some(HashMap::new()),
             },
         };
         let svc = entry_to_service(entry).unwrap();
@@ -439,7 +440,7 @@ mod tests {
                 tags: vec!["version:v1".to_string(), "protocol:GRPC".to_string()],
                 address: "".to_string(),
                 port: 8080,
-                meta: HashMap::new(),
+                meta: Some(HashMap::new()),
             },
         };
         let svc = entry_to_service(entry).unwrap();
@@ -450,5 +451,27 @@ mod tests {
         assert_eq!(svc.weight, 100);
         assert_eq!(svc.created, "");
         assert_eq!(svc.naming_address, "");
+    }
+
+    #[test]
+    fn test_health_entry_deserializes_null_meta() {
+        let json = r#"[{
+            "Node": {"Address": "10.0.0.1"},
+            "Service": {
+                "ID": "uuid-1",
+                "Service": "my-test",
+                "Tags": ["version:v1", "protocol:GRPC", "instance_id:uuid-1", "weight:100"],
+                "Address": "127.0.0.1",
+                "Port": 8080,
+                "Meta": null
+            }
+        }]"#;
+        let entries: Vec<HealthEntry> = serde_json::from_str(json).expect("deserialize health entries");
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].service.meta.is_none());
+        let svc = entry_to_service(entries.into_iter().next().unwrap()).unwrap();
+        assert_eq!(svc.name, "my-test");
+        assert_eq!(svc.version, "v1");
+        assert!(svc.metadata.is_empty());
     }
 }
