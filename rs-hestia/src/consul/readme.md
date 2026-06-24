@@ -101,7 +101,7 @@ use rs_hestia::{Service, ProtocolType};
 let svc = Service {
     network: "tcp".to_string(),
     name: "my-service".to_string(),
-    address: ":8080".to_string(),        // 空 host 注册时自动解析为本机 IPv4
+    address: ":8080".to_string(),        // 空 host 需配合 with_validate_address(true) 才会解析为本机 IPv4
     naming_address: "".to_string(),
     instance_id: "".to_string(),         // 为空时 register 接口自动生成 UUID
     version: "v1".to_string(),

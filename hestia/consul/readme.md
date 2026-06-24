@@ -170,12 +170,13 @@ type Discovery interface {
 
 ### 启动 Consul
 
-本地开发可使用 Docker 快速启动一个 Consul agent：
+本地开发可使用 Docker 快速启动一个 Consul agent（开发模式，带 Web UI）：
 
 ```bash
 docker run -d --name consul \
   -p 8500:8500 \
-  hashicorp/consul:latest
+  -p 8600:8600/udp \
+  hashicorp/consul consul agent -dev -ui -client=0.0.0.0
 ```
 
 ### 安装依赖
@@ -249,7 +250,7 @@ registry, err := consul.NewRegistry(
     consul.WithDialTimeout(10*time.Second),        // 连接超时
     consul.WithTTL("10s"),                          // TTL 健康检查间隔
     consul.WithDeregisterCriticalServiceAfter("1m"), // critical 后自动注销时间
-    consul.WithPrefix("/hestia/registry-consul"),                    // key 前缀
+    consul.WithPrefix("/hestia/registry-consul"),                    // 注册前缀/命名空间
     consul.WithToken("your-acl-token"),             // ACL token
     consul.WithValidateAddress(true),               // 注册时校验地址有效性
 )

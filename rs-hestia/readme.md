@@ -524,6 +524,7 @@ async fn main() -> rs_hestia::Result<()> {
 ```bash
 docker run -d --name consul \
   -p 8500:8500 \
+  -p 8600:8600/udp \
   hashicorp/consul consul agent -dev -ui -client=0.0.0.0
 ```
 
@@ -538,7 +539,10 @@ async fn main() -> rs_hestia::Result<()> {
     let ctx = Context::new();
 
     let registry = new_registry(
-        Options::new(vec!["http://127.0.0.1:8500".to_string()]),
+        Options::new(vec!["http://127.0.0.1:8500".to_string()])
+            .with_health_check_ttl(10)
+            .with_deregister_critical_service_after("1m")
+            .with_validate_address(true), // 自动将 :8080 解析为本机 IPv4
     ).await?;
 
     let mut svc = Service {
@@ -563,6 +567,7 @@ async fn main() -> rs_hestia::Result<()> {
 服务发现：
 
 ```rust
+use std::time::Duration;
 use rs_hestia::consul::{Options, new_discovery};
 use rs_hestia::Context;
 
@@ -572,7 +577,8 @@ async fn main() -> rs_hestia::Result<()> {
 
     let discovery = new_discovery(
         Options::new(vec!["http://127.0.0.1:8500".to_string()])
-            .with_enable_watch(), // 可选：开启定期轮询 watch 实时刷新
+            .with_enable_watch() // 可选：开启定期轮询 watch 实时刷新
+            .with_watch_interval(Duration::from_secs(30)),
     ).await?;
 
     let services = discovery.get_services(&ctx, "order-service", "v1").await?;
