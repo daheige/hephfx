@@ -448,7 +448,7 @@ stack := gutils.CatchStack()
 
 ```toml
 [dependencies]
-rs-hestia = "0.1.10"
+rs-hestia = "0.1.11"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -456,7 +456,7 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 # git 依赖
-rs-hestia = { git = "https://github.com/daheige/hephfx.git", tag = "v0.1.10" }
+rs-hestia = { git = "https://github.com/daheige/hephfx.git", tag = "v1.5.10" }
 ```
 
 ### 最小可用示例
