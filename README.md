@@ -442,13 +442,13 @@ stack := gutils.CatchStack()
 ```
 ## rs-hestia（rust语言实现）
 
-`rs-hestia` 已发布到 crates.io，版本号跟随 `Cargo.toml` 定义（当前 `0.1.9`）。在 Rust 项目中使用时，只需在 `Cargo.toml` 中添加依赖，即可通过 `Registry` 注册服务、`Discovery` 发现服务、`EtcdResolver` 构建 tonic gRPC 通道。
+`rs-hestia` 已发布到 crates.io，版本号跟随 `Cargo.toml` 定义。在 Rust 项目中使用时，只需在 `Cargo.toml` 中添加依赖，即可通过 `Registry` 注册服务、`Discovery` 发现服务、`EtcdResolver` 构建 tonic gRPC 通道。
 
 ### 依赖引入
 
 ```toml
 [dependencies]
-rs-hestia = "0.1.9"
+rs-hestia = "0.1.10"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -456,7 +456,7 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 # git 依赖
-rs-hestia = { git = "https://github.com/daheige/hephfx.git", branch = "main" }
+rs-hestia = { git = "https://github.com/daheige/hephfx.git", tag = "v0.1.10" }
 ```
 
 ### 最小可用示例

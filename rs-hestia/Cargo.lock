@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "rs-hestia"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "env_logger",

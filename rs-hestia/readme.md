@@ -149,16 +149,15 @@ docker run -d --name etcd \
 
 ```toml
 [dependencies]
-rs-hestia = "0.1.9"
+rs-hestia = "0.1.10"
 ```
 
 或直接使用 git 依赖：
 
 ```toml
 [dependencies]
-rs-hestia = { git = "https://github.com/daheige/hephfx.git", branch = "main" }
+rs-hestia = { git = "https://github.com/daheige/hephfx.git", tag = "v0.1.10" }
 ```
-或者指定tag为v0.1.9
 ## 核心模块和用法
 
 ### Service 结构体
