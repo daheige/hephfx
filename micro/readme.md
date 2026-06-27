@@ -17,6 +17,7 @@
   - [gRPC 拦截器与中间件](#grpc-拦截器与中间件)
   - [HTTP Gateway 与路由](#http-gateway-与路由)
   - [连接管理](#连接管理)
+  - [bridge 多下游客户端](#bridge-多下游客户端)
   - [上下文与元数据工具](#上下文与元数据工具)
 - [许可证](#许可证)
 
@@ -242,15 +243,51 @@ micro.WithGRPCHTTPHandler(func(mux *runtime.ServeMux) http.Handler {
 
 ### 连接管理
 
-`conn.go` 提供全局 gRPC 客户端连接管理：
+`micro/gclient` 提供全局 gRPC 客户端连接管理，并封装了常用的客户端创建辅助方法：
 
 ```go
-// 注册连接，key 不允许重复
-micro.RegisterGRPCConnections("user-service", conn)
+import (
+    "log"
 
-// main 函数退出前统一关闭
-defer micro.CloseGRPCConnections()
+    "google.golang.org/grpc"
+
+    "github.com/daheige/hephfx/example/pb"
+    "github.com/daheige/hephfx/micro/gclient"
+)
+
+// 方式一：使用 InitGRPCClient 一键创建客户端
+// 默认启用 round_robin、insecure、30min idle、3 次重试
+client, err := gclient.InitGRPCClient("localhost:50051", pb.NewGreeterClient, grpc.WithMaxCallAttempts(3))
+if err != nil {
+    log.Fatal(err)
+}
+defer gclient.Close("localhost:50051")
+
+// 方式二：手动注册已有的 grpc.ClientConn
+// conn, _ := grpc.NewClient("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+// gclient.RegisterGRPCConnections("localhost:50051", conn)
+// defer gclient.CloseGRPCConnections()
 ```
+
+> **Deprecated 说明**
+>
+> `micro/conn.go` 中的 `RegisterGRPCConnections` / `CloseGRPCConnections` 已标记为废弃，内部仅作为兼容入口转发到 `micro/gclient` 的同名函数：
+>
+> ```go
+> // 旧用法（仍兼容，但不推荐）
+> micro.RegisterGRPCConnections("user-service", conn)
+> defer micro.CloseGRPCConnections()
+>
+> // 新用法（推荐）
+> gclient.RegisterGRPCConnections("user-service", conn)
+> defer gclient.CloseGRPCConnections()
+> ```
+>
+> 为了避免循环依赖并统一客户端连接管理能力，`conn.go` 不再维护独立实现。建议新代码直接导入 `github.com/daheige/hephfx/micro/gclient`，并优先使用 `InitGRPCClient` / `Close(target)` 创建和关闭连接。
+
+### bridge 多下游客户端
+
+`micro/bridge` 是基于 YAML 配置的多下游 gRPC 客户端 SDK。它读取 `bridge_services` 服务列表，为每个下游服务创建并维护一条独立的 `grpc.ClientConn`，业务方按逻辑服务名即可发起调用，无需关心连接管理与负载均衡细节。详见 [micro/bridge/readme.md](bridge/readme.md)。
 
 ### 上下文与元数据工具
 

@@ -1,0 +1,9 @@
+bridge_services:
+  - name: uc-svc
+    target: uc.cluster.local:8080
+    service: uc.UserService
+  - name: greeter-svc
+    target: 127.0.0.1:50051
+    service: "Hello.Greeter"
+    metadata:
+      x-service: "greeter"

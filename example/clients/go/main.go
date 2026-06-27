@@ -3,12 +3,11 @@ package main
 import (
 	"context"
 	"log"
-	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/daheige/hephfx/example/clients/go/pb"
+	"github.com/daheige/hephfx/micro/gclient"
 )
 
 func main() {
@@ -18,21 +17,12 @@ func main() {
 	// address := "dns:///hello.test.svc.cluster.local:50051"
 	log.Println("address:", address)
 
-	// Set up a connection to the server.
-	clientConn, err := grpc.NewClient(
-		address,
-		// grpc.WithDefaultServiceConfig(`{"loadBalancingConfig": [{"round_robin":{}}]}`),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithIdleTimeout(30*time.Minute), // 连接生命周期
-		grpc.WithMaxCallAttempts(3),          // 最大重试次数
-	)
+	// create gRPC client
+	client, err := gclient.InitGRPCClient(address, pb.NewGreeterClient, grpc.WithMaxCallAttempts(3))
 	if err != nil {
-		log.Fatalf("failed to connect: %v", err)
+		log.Fatalf("failed to create gRPC client: %v", err)
 	}
-
-	defer clientConn.Close()
-
-	client := pb.NewGreeterClient(clientConn)
+	defer gclient.Close(address)
 
 	// Contact the server and print out its response.
 	res, err := client.SayHello(context.Background(), &pb.HelloReq{

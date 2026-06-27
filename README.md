@@ -170,7 +170,9 @@ graph TB
 │   ├── micro.go                  # Service 核心实现
 │   ├── option.go                 # 启动配置选项
 │   ├── router.go                 # HTTP Gateway 自定义路由
-│   ├── conn.go                   # gRPC 连接相关
+│   ├── conn.go                   # gRPC 连接相关（已弃用，兼容入口）
+│   ├── gclient                   # gRPC 客户端连接管理与创建辅助
+│   ├── bridge                    # 基于 YAML 配置的多下游 gRPC 客户端
 │   ├── logger.go                 # 日志接口适配
 │   ├── signals.go                # 信号处理
 │   ├── readme.md                 # micro 使用说明
@@ -349,6 +351,11 @@ micro实战参考：
 
 常用配置项见 [micro/option.go](micro/option.go)。micro更多用法查看：https://github.com/daheige/hephfx/tree/main/micro
 
+除服务端封装外，`micro` 还提供客户端辅助：
+
+- `micro/gclient`：提供 `InitGRPCClient` 一键创建 gRPC 客户端、按 target 关闭连接以及统一连接管理，避免业务侧手动维护 `grpc.ClientConn`。
+- `micro/bridge`：基于 YAML 配置的多下游 gRPC 客户端 SDK，适合存在多个下游 gRPC 服务的场景，详见 [micro/bridge/readme.md](micro/bridge/readme.md)。
+
 ### hestia
 
 `hestia` 提供服务注册与发现能力，内置 etcd 与 Consul 两种注册中心实现；Rust 版 `rs-hestia` 同样提供 etcd 与 Consul 实现。两套实现共享 `Registry` / `Discovery` 抽象与 `Service` 实体定义，支持 `etcd:///service/version` 与 `consul:///service/version` 两种 gRPC resolver target，Go 与 Rust 服务可互相注册和发现。
@@ -448,7 +455,7 @@ stack := gutils.CatchStack()
 
 ```toml
 [dependencies]
-rs-hestia = "0.1.11"
+rs-hestia = "0.1.12"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -456,7 +463,7 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 # git 依赖
-rs-hestia = { git = "https://github.com/daheige/hephfx.git", tag = "v1.5.10" }
+rs-hestia = { git = "https://github.com/daheige/hephfx.git", tag = "v1.6.0" }
 ```
 
 ### 最小可用示例

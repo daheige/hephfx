@@ -86,7 +86,7 @@ docker run -d --name consul \
 
 ```toml
 [dependencies]
-rs-hestia = "0.1.7"
+rs-hestia = "0.1.12"
 ```
 
 ## 核心模块和用法

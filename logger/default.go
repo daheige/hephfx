@@ -3,6 +3,7 @@ package logger
 import (
 	"context"
 	"runtime/debug"
+	"sync"
 
 	"go.uber.org/zap"
 
@@ -11,7 +12,9 @@ import (
 
 var (
 	// logEntry default logger entry.
-	logEntry Logger
+	logEntry = createLogger()
+
+	once sync.Once
 
 	// defaultLogDir default log dir.
 	defaultLogDir = "./logs"
@@ -19,25 +22,38 @@ var (
 
 // Default 初始化默认zap logger接口
 // 默认日志写到终端中
-func Default(opts ...Option) {
+func Default(opts ...Option) Logger {
+	once.Do(func() {
+		logEntry = createLogger(opts...)
+	})
+
+	return logEntry
+}
+
+// NewLogger 创建一个新的logger接口实例
+func NewLogger(opts ...Option) Logger {
+	return createLogger(opts...)
+}
+
+func createLogger(opts ...Option) Logger {
 	options := []Option{
 		WithJsonFormat(true),        // 默认json格式化输出
 		WithCallerSkip(2),           // 如果基于这个Logger包，需要设置适当的skip
 		WithLogLevel(zap.InfoLevel), // 设置日志打印最低级别,如果不设置,默认为info级别
 		WithStdout(true),            // 日志默认输出到终端
-
 		// WithLogDir(defaultLogDir),       // 日志目录
 		// WithLogFilename(defaultLogFile), // 日志文件名，默认zap.log
 		// WithMaxAge(3),                   // 最大保存3天
 		// WithMaxSize(200),                // 每个日志文件最大200MB
-		// WithWriteToFile(true),           // 默认开启日志写入文件中
+		WithWriteToFile(false), // 默认不开启日志写入文件中
 	}
 
 	if len(opts) > 0 {
 		options = append(options, opts...)
 	}
 
-	logEntry = New(options...)
+	entry := New(options...)
+	return entry
 }
 
 // Debug debug级别日志
